@@ -1,0 +1,8 @@
+[flake8]
+max-line-length = 88
+extend-ignore = E203, W503
+select = C,E,F,W,B,B950
+max-complexity = 12
+per-file-ignores =
+    __init__.py: F401
+exclude = .git,__pycache__,.venv,venv,build,dist,artifacts,datasets,augmented_directory
