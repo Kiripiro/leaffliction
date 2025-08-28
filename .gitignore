@@ -211,6 +211,8 @@ __marimo__/
 
 # Dataset
 images/
+datasets/
+augmented_directory/
 
 # Output
 artifacts/
