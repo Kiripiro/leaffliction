@@ -1,7 +1,9 @@
 import json
+import multiprocessing as mp
 import random
 import shutil
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from transformations import ImageTransformer
@@ -14,13 +16,35 @@ class DatasetBalancer:
         source_dir="images",
         target_dir="augmented_directory",
         seed=42,
+        workers=None,
     ):
         self.manifest_path = Path(manifest_path)
         self.source_dir = Path(source_dir)
         self.target_dir = Path(target_dir)
         self.transformer = ImageTransformer(seed=seed)
+        self.workers = self._validate_workers(workers)
         self.counts = {}
         self.plan = {}
+        self.original_manifest = None
+
+    def _validate_workers(self, workers):
+        max_workers = mp.cpu_count()
+
+        if workers is None:
+            workers = max(1, max_workers // 2)
+        else:
+            workers = max(1, int(workers))
+
+            if workers > max_workers:
+                print(
+                    f"WARNING: Requested {workers} workers, "
+                    f"but only {max_workers} CPUs available"
+                )
+                print(f"Using {max_workers} workers instead")
+                workers = max_workers
+
+        print(f"Using {workers} worker processes (max available: {max_workers})")
+        return workers
 
     def analyze_distribution(self):
         print("Analyzing dataset distribution...")
@@ -30,6 +54,8 @@ class DatasetBalancer:
 
         with open(self.manifest_path, "r", encoding="utf-8") as f:
             manifest = json.load(f)
+
+        self.original_manifest = manifest
 
         counts = defaultdict(lambda: defaultdict(int))
 
@@ -125,18 +151,8 @@ class DatasetBalancer:
         self._prepare_target_directory()
         images_by_class = self._get_images_by_class()
 
-        total_augmentations = sum(
-            sum(transforms.values()) for transforms in self.plan.values()
-        )
-
-        print(
-            f"\nStarting augmentation process: {total_augmentations} images to generate"
-        )
-        completed = 0
-
+        tasks = []
         for class_name, transforms in self.plan.items():
-            print(f"\n[{class_name}]")
-
             if class_name not in images_by_class:
                 print(f"WARNING: No images found for class '{class_name}'")
                 continue
@@ -145,29 +161,140 @@ class DatasetBalancer:
             class_dir = source_images[0].parent
 
             for transform_name, count in transforms.items():
-                print(f"  {transform_name}: generating {count} images")
-
                 for i in range(count):
                     source_img = random.choice(source_images)
-
                     suffix = f"_aug_{transform_name}_{i + 1}"
                     new_name = source_img.stem + suffix + source_img.suffix
                     output_path = class_dir / new_name
 
-                    transform_method = getattr(self.transformer, transform_name)
-                    if not transform_method(source_img, output_path):
-                        print(f"    Failed to generate {output_path}")
-                        continue
+                    tasks.append(
+                        {
+                            "source_img": str(source_img),
+                            "output_path": str(output_path),
+                            "transform_name": transform_name,
+                            "class_name": class_name,
+                        }
+                    )
 
-                    completed += 1
-                    if completed % 100 == 0:
-                        progress = (completed / total_augmentations) * 100
+        total_tasks = len(tasks)
+        print(f"\nStarting parallel augmentation: {total_tasks} images to generate")
+
+        completed = 0
+        failed = 0
+
+        with ProcessPoolExecutor(max_workers=self.workers) as executor:
+            future_to_task = {
+                executor.submit(_process_single_transformation, task): task
+                for task in tasks
+            }
+
+            for future in as_completed(future_to_task):
+                task = future_to_task[future]
+                try:
+                    success = future.result()
+                    if success:
+                        completed += 1
+                    else:
+                        failed += 1
+                        print(f"    Failed: {task['output_path']}")
+
+                    if (completed + failed) % 500 == 0:
+                        progress = ((completed + failed) / total_tasks) * 100
                         print(
-                            f"    [{completed}/{total_augmentations}] "
-                            f"{progress:.1f}% complete"
+                            f"    Progress: {completed + failed}/{total_tasks} "
+                            f"({progress:.1f}%) - {completed} success, {failed} failed"
                         )
 
-        print(f"\nAugmentation complete: {completed} new images generated successfully")
+                except Exception as e:
+                    failed += 1
+                    print(f"    Error processing {task['output_path']}: {e}")
+
+        print(f"\nAugmentation complete: {completed} images generated, {failed} failed")
+
+        self._generate_augmented_manifest()
+
+    def _generate_augmented_manifest(self):
+        print("\nGenerating augmented manifest...")
+
+        augmented_items = []
+
+        if self.original_manifest and "items" in self.original_manifest:
+            for item in self.original_manifest["items"]:
+                updated_item = item.copy()
+                old_path = Path(item["src"])
+
+                try:
+                    abs_source_dir = self.source_dir.resolve()
+                    relative_part = old_path.relative_to(abs_source_dir)
+                except ValueError:
+                    relative_part = Path(item["id"])
+
+                new_path = self.target_dir / relative_part
+                updated_item["src"] = str(new_path)
+                updated_item["id"] = str(relative_part)
+                augmented_items.append(updated_item)
+
+        for plant_dir in self.target_dir.iterdir():
+            if not plant_dir.is_dir():
+                continue
+
+            plant_name = plant_dir.name
+
+            for class_dir in plant_dir.iterdir():
+                if not class_dir.is_dir():
+                    continue
+
+                class_name = class_dir.name
+
+                aug_images = list(class_dir.glob("*_aug_*"))
+
+                for aug_img in aug_images:
+                    augmented_item = {
+                        "plant": plant_name,
+                        "class": class_name,
+                        "label": f"{plant_name}__{class_name}",
+                        "split": "train",
+                        "src": str(aug_img),
+                        "id": str(aug_img.relative_to(self.target_dir)),
+                        "augmented": True,
+                    }
+                    augmented_items.append(augmented_item)
+
+        augmented_manifest = {
+            "meta": {
+                "created_at": (
+                    self.original_manifest["meta"]["created_at"]
+                    if self.original_manifest
+                    else None
+                ),
+                "augmented_at": "2025-08-31T00:00:00+00:00",
+                "original_seed": (
+                    self.original_manifest["meta"].get("seed")
+                    if self.original_manifest
+                    else None
+                ),
+                "augmentation_seed": 42,
+                "workers": self.workers,
+                "src_root": str(self.target_dir),
+                "total_images": len(augmented_items),
+                "original_images": len(
+                    [i for i in augmented_items if not i.get("augmented", False)]
+                ),
+                "augmented_images": len(
+                    [i for i in augmented_items if i.get("augmented", False)]
+                ),
+            },
+            "items": augmented_items,
+        }
+
+        manifest_path = self.manifest_path.parent / "manifest_augmented.json"
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(augmented_manifest, f, indent=2, ensure_ascii=False)
+
+        print(f"Augmented manifest saved: {manifest_path}")
+        print(f"  Total images: {augmented_manifest['meta']['total_images']}")
+        print(f"  Original: {augmented_manifest['meta']['original_images']}")
+        print(f"  Augmented: {augmented_manifest['meta']['augmented_images']}")
 
     def run(self):
         print("=== Dataset Balancing System ===")
@@ -182,3 +309,12 @@ class DatasetBalancer:
         except Exception as e:
             print(f"ERROR: Dataset balancing failed - {e}")
             raise
+
+
+def _process_single_transformation(task):
+    try:
+        transformer = ImageTransformer(seed=42)
+        transform_method = getattr(transformer, task["transform_name"])
+        return transform_method(task["source_img"], task["output_path"])
+    except Exception:
+        return False
