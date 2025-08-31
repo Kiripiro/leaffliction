@@ -2,13 +2,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from dataset_balancer import DatasetBalancer
-from utils.common import setup_logging
-
-sys.path.append(str(Path(__file__).parent.parent))
-
 
 def main():
+    sys.path.append(str(Path(__file__).parent.parent))
+
+    from dataset_balancer import DatasetBalancer
+    from utils.common import setup_logging
+
     setup_logging()
 
     parser = argparse.ArgumentParser(
