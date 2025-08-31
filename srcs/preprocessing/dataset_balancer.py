@@ -1,5 +1,4 @@
 import logging
-import multiprocessing as mp
 import random
 import shutil
 from collections import defaultdict
@@ -12,14 +11,7 @@ from dataset_components import (
     ManifestGenerator,
 )
 from image_augmenter import ImageAugmenter
-
-try:
-    from utils.system_info import get_optimal_worker_count
-except ImportError:
-
-    def get_optimal_worker_count():
-        return mp.cpu_count() // 2
-
+from utils.system_info import get_optimal_worker_count
 
 logger = logging.getLogger(__name__)
 

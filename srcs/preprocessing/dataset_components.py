@@ -1,4 +1,5 @@
 import json
+import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,11 +31,11 @@ class DistributionAnalyzer:
         return self.counts
 
     def display_distribution(self):
-        print("Analyzing dataset distribution...")
+        logging.info("Analyzing dataset distribution...")
         for plant, classes in sorted(self.counts.items()):
-            print(f"\n[{plant}]")
+            logging.info(f"\n[{plant}]")
             for class_name, count in sorted(classes.items()):
-                print(f"  {class_name}: {count} images")
+                logging.info(f"  {class_name}: {count} images")
 
 
 class AugmentationPlanner:
@@ -43,7 +44,7 @@ class AugmentationPlanner:
         self.plan = {}
 
     def calculate_plan(self):
-        print("\nCalculating augmentation plan...")
+        logging.info("Calculating augmentation plan...")
 
         deficits = {}
         for _plant, classes in self.counts.items():
@@ -54,7 +55,7 @@ class AugmentationPlanner:
                     deficits[class_name] = deficit
 
         if not deficits:
-            print("Dataset already balanced - no augmentations needed")
+            logging.info("Dataset already balanced - no augmentations needed")
             return {}
 
         transformations = ["flip", "rotate", "skew", "shear", "crop", "distortion"]
@@ -75,12 +76,12 @@ class AugmentationPlanner:
         return plan
 
     def _display_plan(self, deficits):
-        print("\nExecution plan:")
+        logging.info("Execution plan:")
         for class_name, deficit in sorted(deficits.items()):
-            print(f"  Class: {class_name} - {deficit} images needed")
+            logging.info(f"  Class: {class_name} - {deficit} images needed")
             if class_name in self.plan:
                 for transform_name, count in sorted(self.plan[class_name].items()):
-                    print(f"    - {transform_name}: {count} images")
+                    logging.info(f"    - {transform_name}: {count} images")
 
 
 class ManifestGenerator:
@@ -91,7 +92,7 @@ class ManifestGenerator:
         self.workers = workers
 
     def generate_augmented_manifest(self):
-        print("\nGenerating augmented manifest...")
+        logging.info("Generating augmented manifest...")
 
         augmented_items = []
 
@@ -168,7 +169,7 @@ class ManifestGenerator:
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2, ensure_ascii=False)
 
-        print(f"Augmented manifest saved: {output_path}")
-        print(f"  Total images: {manifest['meta']['total_images']}")
-        print(f"  Original: {manifest['meta']['original_images']}")
-        print(f"  Augmented: {manifest['meta']['augmented_images']}")
+        logging.info(f"Augmented manifest saved: {output_path}")
+        logging.info(f"  Total images: {manifest['meta']['total_images']}")
+        logging.info(f"  Original: {manifest['meta']['original_images']}")
+        logging.info(f"  Augmented: {manifest['meta']['augmented_images']}")
