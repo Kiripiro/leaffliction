@@ -1,9 +1,16 @@
 import argparse
+import sys
+from pathlib import Path
 
 from dataset_balancer import DatasetBalancer
+from utils.common import setup_logging
+
+sys.path.append(str(Path(__file__).parent.parent))
 
 
 def main():
+    setup_logging()
+
     parser = argparse.ArgumentParser(
         description="Balance leaf disease dataset with augmentations"
     )

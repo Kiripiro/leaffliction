@@ -1,3 +1,4 @@
+import logging
 import multiprocessing as mp
 import random
 import shutil
@@ -10,7 +11,17 @@ from dataset_components import (
     DistributionAnalyzer,
     ManifestGenerator,
 )
-from transformations import ImageTransformer
+from image_augmenter import ImageAugmenter
+
+try:
+    from utils.system_info import get_optimal_worker_count
+except ImportError:
+
+    def get_optimal_worker_count():
+        return mp.cpu_count() // 2
+
+
+logger = logging.getLogger(__name__)
 
 
 class DatasetBalancer:
@@ -25,7 +36,7 @@ class DatasetBalancer:
         self.manifest_path = Path(manifest_path)
         self.source_dir = Path(source_dir)
         self.target_dir = Path(target_dir)
-        self.transformer = ImageTransformer(seed=seed)
+        self.transformer = ImageAugmenter(seed=seed)
         self.workers = self._validate_workers(workers)
 
         self.analyzer = DistributionAnalyzer(manifest_path)
@@ -34,7 +45,7 @@ class DatasetBalancer:
         self.plan = {}
 
     def _validate_workers(self, workers):
-        max_workers = mp.cpu_count()
+        max_workers = get_optimal_worker_count()
 
         if workers is None:
             workers = max(1, max_workers // 2)
@@ -42,14 +53,14 @@ class DatasetBalancer:
             workers = max(1, int(workers))
 
             if workers > max_workers:
-                print(
-                    f"WARNING: Requested {workers} workers, "
+                logger.warning(
+                    f"Requested {workers} workers, "
                     f"but only {max_workers} CPUs available"
                 )
-                print(f"Using {max_workers} workers instead")
+                logger.warning(f"Using {max_workers} workers instead")
                 workers = max_workers
 
-        print(f"Using {workers} worker processes (max available: {max_workers})")
+        logger.info(f"Using {workers} worker processes (max available: {max_workers})")
         return workers
 
     def analyze_distribution(self):
@@ -64,7 +75,7 @@ class DatasetBalancer:
         return self.plan
 
     def _prepare_target_directory(self):
-        print(f"\nPreparing target directory: {self.target_dir}")
+        logger.info(f"Preparing target directory: {self.target_dir}")
 
         if self.target_dir.exists():
             shutil.rmtree(self.target_dir)
@@ -73,7 +84,7 @@ class DatasetBalancer:
             raise FileNotFoundError(f"Source directory not found: {self.source_dir}")
 
         shutil.copytree(self.source_dir, self.target_dir)
-        print(f"Copied all original images to {self.target_dir}")
+        logger.info(f"Copied all original images to {self.target_dir}")
 
     def _get_images_by_class(self):
         images_by_class = defaultdict(list)
@@ -92,7 +103,7 @@ class DatasetBalancer:
 
     def execute_balancing(self):
         if not self.plan:
-            print("No augmentation plan - skipping execution")
+            logger.info("No augmentation plan - skipping execution")
             return
 
         self._prepare_target_directory()
@@ -101,7 +112,7 @@ class DatasetBalancer:
         tasks = []
         for class_name, transforms in self.plan.items():
             if class_name not in images_by_class:
-                print(f"WARNING: No images found for class '{class_name}'")
+                logger.warning(f"No images found for class '{class_name}'")
                 continue
 
             source_images = images_by_class[class_name]
@@ -124,7 +135,7 @@ class DatasetBalancer:
                     )
 
         total_tasks = len(tasks)
-        print(f"\nStarting parallel augmentation: {total_tasks} images to generate")
+        logger.info(f"Starting parallel augmentation: {total_tasks} images to generate")
 
         completed = 0
         failed = 0
@@ -143,20 +154,22 @@ class DatasetBalancer:
                         completed += 1
                     else:
                         failed += 1
-                        print(f"    Failed: {task['output_path']}")
+                        logger.error(f"Failed: {task['output_path']}")
 
                     if (completed + failed) % 500 == 0:
                         progress = ((completed + failed) / total_tasks) * 100
-                        print(
-                            f"    Progress: {completed + failed}/{total_tasks} "
+                        logger.info(
+                            f"Progress: {completed + failed}/{total_tasks} "
                             f"({progress:.1f}%) - {completed} success, {failed} failed"
                         )
 
                 except Exception as e:
                     failed += 1
-                    print(f"    Error processing {task['output_path']}: {e}")
+                    logger.error(f"Error processing {task['output_path']}: {e}")
 
-        print(f"\nAugmentation complete: {completed} images generated, {failed} failed")
+        logger.info(
+            f"Augmentation complete: {completed} images generated, {failed} failed"
+        )
 
         self._generate_augmented_manifest()
 
@@ -172,22 +185,22 @@ class DatasetBalancer:
         self.manifest_generator.save_manifest(manifest, manifest_path)
 
     def run(self):
-        print("=== Dataset Balancing System ===")
+        logger.info("=== Dataset Balancing System ===")
 
         try:
             self.analyze_distribution()
             self.calculate_plan()
             self.execute_balancing()
-            print("\n=== Balancing Complete ===")
+            logger.info("=== Balancing Complete ===")
 
         except Exception as e:
-            print(f"ERROR: Dataset balancing failed - {e}")
+            logger.error(f"Dataset balancing failed - {e}")
             raise
 
 
 def _process_single_transformation(task):
     try:
-        transformer = ImageTransformer(seed=42)
+        transformer = ImageAugmenter(seed=42)
         transform_method = getattr(transformer, task["transform_name"])
         return transform_method(task["source_img"], task["output_path"])
     except Exception:
