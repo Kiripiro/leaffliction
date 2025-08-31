@@ -1,10 +1,13 @@
+import logging
 import random
 
 import numpy as np
 from PIL import Image, ImageOps
 
+logger = logging.getLogger(__name__)
 
-class ImageTransformer:
+
+class ImageAugmenter:
     def __init__(self, seed=None):
         if seed:
             random.seed(seed)
@@ -20,7 +23,7 @@ class ImageTransformer:
                 img.save(output_path, quality=95)
                 return True
         except Exception as e:
-            print(f"ERROR: Failed to process {image_path} - {e}")
+            logger.error(f"Failed to process {image_path} - {e}")
             return False
 
     def rotate(self, image_path, output_path):
@@ -31,7 +34,7 @@ class ImageTransformer:
                 img.save(output_path, quality=95)
                 return True
         except Exception as e:
-            print(f"ERROR: Failed to process {image_path} - {e}")
+            logger.error(f"Failed to process {image_path} - {e}")
             return False
 
     def skew(self, image_path, output_path):
@@ -60,7 +63,7 @@ class ImageTransformer:
                 img.save(output_path, quality=95)
                 return True
         except Exception as e:
-            print(f"ERROR: Failed to process {image_path} - {e}")
+            logger.error(f"Failed to process {image_path} - {e}")
             return False
 
     def shear(self, image_path, output_path):
@@ -83,7 +86,7 @@ class ImageTransformer:
                 img.save(output_path, quality=95)
                 return True
         except Exception as e:
-            print(f"ERROR: Failed to process {image_path} - {e}")
+            logger.error(f"Failed to process {image_path} - {e}")
             return False
 
     def crop(self, image_path, output_path):
@@ -103,7 +106,7 @@ class ImageTransformer:
                 img.save(output_path, quality=95)
                 return True
         except Exception as e:
-            print(f"ERROR: Failed to process {image_path} - {e}")
+            logger.error(f"Failed to process {image_path} - {e}")
             return False
 
     def distortion(self, image_path, output_path):
@@ -120,5 +123,5 @@ class ImageTransformer:
                 img.save(output_path, quality=95)
                 return True
         except Exception as e:
-            print(f"ERROR: Failed to process {image_path} - {e}")
+            logger.error(f"Failed to process {image_path} - {e}")
             return False
