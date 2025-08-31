@@ -6,3 +6,4 @@ flake8-comprehensions
 pre-commit
 mypy
 types-PyYAML
+matplotlib

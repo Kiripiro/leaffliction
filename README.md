@@ -12,7 +12,7 @@ source .venv/bin/activate  # macOS/Linux
 # (deactivate with: deactivate)
 ```
 
-## 4. Install dependencies
+## 2. Install dependencies
 
 Dev / tooling dependencies:
 
@@ -26,7 +26,7 @@ Runtime depedencies:
 pip install -r requirements.txt
 ```
 
-## 5. Configure pre-commit hooks
+## 3. Configure pre-commit hooks
 
 ```bash
 pre-commit install --install-hooks
@@ -43,7 +43,7 @@ This automatically checks if the code adheres to the specified style and quality
 It can be run manually at any time.
 Otherwise, it will run automatically before each commit.
 
-## 6. Project layout and dataset structure
+## 4. Project layout and dataset structure
 
 ```
 images/                 # Dataset root (root/PLANT/CLASS/*.jpg)
@@ -52,70 +52,16 @@ srcs/cli/Distribution.py  # Dataset distribution analysis script
 artifacts/plots/        # Output: CSV + plots
 ```
 
-## 7. Distribution analysis script
+## 6. CLI scripts documentation
 
-The script scans a multi-level dataset organized as:
+-   Distribution analysis: `docs/cli/distribution.md`
+-   Train/validation split: `docs/cli/split.md`
 
-```
-<root>/PLANT/CLASS/image (n).jpg
-```
-
-It produces:
-
--   `artifacts/plots/distribution.csv` (cumulative; updated counts per run)
--   Per-plant bar + pie charts in `artifacts/plots/`
-
-### 7.1 Basic usage
-
-Explicit dataset root:
-
-```bash
-python srcs/cli/Distribution.py /path/to/images
-```
-
-Filter specific plants (e.g. only Apple and Grape):
-
-```bash
-python srcs/cli/Distribution.py --plants Apple Grape
-```
-
-Filter specific plants (e.g. only Apple):
-
-```bash
-python srcs/cli/Distribution.py --plants Apple
-```
-
-No filter used, all plants will be included:
-
-```bash
-python srcs/cli/Distribution.py
-```
-
-Skip plot generation (CSV only):
-
-```bash
-python srcs/cli/Distribution.py --no-plots
-```
-
-### 7.2 Output files
-
-| Path                               | Description                                           |
-| ---------------------------------- | ----------------------------------------------------- |
-| `artifacts/plots/distribution.csv` | Aggregated counts (plant,class,count) updated per run |
-| `artifacts/plots/<PLANT>_bar.png`  | Bar chart distribution for the plant                  |
-| `artifacts/plots/<PLANT>_pie.png`  | Pie chart distribution for the plant                  |
-
-Re-running merges (overwrites) counts for rows (plant,class) with current scan results, preserving other plants/classes.
-
-### 7.3 Supported extensions
-
-Currently only `.jpg` (case-insensitive). Extend by editing `IMAGE_EXTS` in `srcs/cli/Distribution.py`.
-
-## 8. Logging
+## 7. Logging
 
 Simple colored logging at INFO level (suppresses loud third-party DEBUG like font discovery). No user options required.
 
-## 9. Code style & quality
+## 8. Code style & quality
 
 Tools enforced via pre-commit:
 
