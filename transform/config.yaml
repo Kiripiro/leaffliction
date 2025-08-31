@@ -1,0 +1,58 @@
+# PlantCV Transformation config — robust defaults
+# This file makes the CLI deterministic and tunable without touching the code.
+# You can adjust thresholds here for different species, lighting, and backgrounds.
+
+# --- General ---
+# Gaussian blur sigma used in the Blur step (fallback)
+gaussian_sigma: 1.2
+
+# ROI output size (H, W)
+roi_size: [224, 224]
+
+# Total number of pseudo-landmarks to place (border/veins/anomalies balanced)
+landmarks_count: 64
+
+# --- Masking (segmentation) ---
+# Strategy: auto | hsv_s | hsv_v_dark | hsv_h | lab | kmeans
+mask_strategy: auto
+
+# Background bias helps k-means pick the correct cluster:
+#   light_bg for bright backgrounds, dark_bg for dark backgrounds, or leave null
+bg_bias: light_bg
+
+# Refine the best mask with GrabCut (1 iteration) and keep it if it scores better
+grabcut_refine: true
+
+# Expected green hue range [lo, hi] for typical green leaves (0–180 in OpenCV)
+# If your leaves are not green (bronze/red/yellow), widen to [0, 180]
+green_hue_range: [30, 95]
+
+# Object size sanity bounds as fraction of image area
+# Tighten max to reject leaf+shadow unions on simple backgrounds
+min_object_area_ratio: 0.30
+max_object_area_ratio: 0.60
+
+# Fill small holes inside the mask (pixels)
+fill_size: 500
+
+# Morphological kernel (odd). Lower values reduce over-connection with shadows
+morph_kernel: 3
+
+# Optional pre-upscaling improves edge quality before segmentation
+# Either use a factor (>1.0) or a target long side in pixels. Factor takes precedence.
+mask_upscale_factor: 1.0
+mask_upscale_long_side: 1600
+
+# --- Shadow suppression ---
+# Remove low-V, low-S, non-green pixels from the mask candidate and re-score
+shadow_suppression: true
+
+# Max saturation to consider a pixel as shadow when V is low
+shadow_s_max: 60
+
+# How to pick the V threshold: otsu | percentile
+shadow_v_method: percentile
+shadow_v_percentile: 30  # raise to 35–40 if shadows still leak in
+
+# Legacy option used by the fallback simple pipeline
+hsv_channel_for_mask: s

@@ -6,3 +6,8 @@ flake8-comprehensions
 pre-commit
 mypy
 types-PyYAML
+plantcv>=3.14
+opencv-python
+numpy
+pillow
+matplotlib
