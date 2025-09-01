@@ -5,13 +5,13 @@ from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
-from dataset_components import (
+from srcs.preprocessing.dataset_components import (
     AugmentationPlanner,
     DistributionAnalyzer,
     ManifestGenerator,
 )
-from image_augmenter import ImageAugmenter
-from utils.system_info import get_optimal_worker_count
+from srcs.preprocessing.image_augmenter import ImageAugmenter
+from srcs.utils.system_info import get_optimal_worker_count
 
 logger = logging.getLogger(__name__)
 

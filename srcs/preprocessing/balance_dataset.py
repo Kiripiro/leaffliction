@@ -1,13 +1,21 @@
 import argparse
-import sys
 from pathlib import Path
+
+try:
+    from srcs.preprocessing.dataset_balancer import DatasetBalancer
+    from srcs.utils.common import setup_logging
+except ModuleNotFoundError:
+    import sys
+
+    project_root = Path(__file__).resolve().parents[2]
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+
+    from srcs.preprocessing.dataset_balancer import DatasetBalancer
+    from srcs.utils.common import setup_logging
 
 
 def main():
-    sys.path.append(str(Path(__file__).parent.parent))
-
-    from dataset_balancer import DatasetBalancer
-    from utils.common import setup_logging
 
     setup_logging()
 
