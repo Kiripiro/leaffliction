@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 
 try:
+    from srcs.cli.Distribution import count_images, merge_csv, plot_per_plant
     from srcs.preprocessing.dataset_balancer import DatasetBalancer
     from srcs.utils.common import setup_logging
 except ModuleNotFoundError:
@@ -11,6 +12,7 @@ except ModuleNotFoundError:
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
 
+    from srcs.cli.Distribution import count_images, merge_csv, plot_per_plant
     from srcs.preprocessing.dataset_balancer import DatasetBalancer
     from srcs.utils.common import setup_logging
 
@@ -27,6 +29,10 @@ def main():
         help="Path to the manifest.json file",
     )
     parser.add_argument(
+        "source_dir",
+        help="Path to the source images directory",
+    )
+    parser.add_argument(
         "--workers",
         type=int,
         default=None,
@@ -36,7 +42,7 @@ def main():
 
     project_root = Path(__file__).resolve().parents[2]
     manifest_path = args.manifest_path
-    source_dir = project_root / "images"
+    source_dir = args.source_dir
     target_dir = project_root / "augmented_directory"
     seed = 42
 
@@ -49,6 +55,37 @@ def main():
     )
 
     balancer.run()
+
+    analyze_distribution(target_dir)
+
+
+def analyze_distribution(target_dir: str) -> None:
+    """Analyze distribution of balanced dataset"""
+    import logging
+
+    target_path = Path(target_dir)
+    if not target_path.exists():
+        logging.warning("Target directory doesn't exist: %s", target_dir)
+        return
+
+    logging.info("Analyzing distribution of balanced dataset...")
+    rows = count_images(target_path, None)
+
+    if not rows:
+        logging.warning("No images found in target directory")
+        return
+
+    out_dir = target_path.parent / "artifacts" / "distribution"
+    csv_path = out_dir / "balanced_distribution.csv"
+
+    merge_csv(rows, csv_path)
+    logging.info("Distribution CSV written: %s", csv_path.resolve())
+
+    plot_per_plant(rows, out_dir)
+    logging.info("Distribution plots written: %s", out_dir.resolve())
+
+    total = sum(n for _, _, n in rows)
+    logging.info("Total balanced images: %d", total)
 
 
 if __name__ == "__main__":
