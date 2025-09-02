@@ -4,7 +4,7 @@ from pathlib import Path
 try:
     from srcs.cli.Distribution import count_images, merge_csv, plot_per_plant
     from srcs.preprocessing.dataset_balancer import DatasetBalancer
-    from srcs.utils.common import setup_logging
+    from srcs.utils.common import get_logger, setup_logging
 except ModuleNotFoundError:
     import sys
 
@@ -14,7 +14,7 @@ except ModuleNotFoundError:
 
     from srcs.cli.Distribution import count_images, merge_csv, plot_per_plant
     from srcs.preprocessing.dataset_balancer import DatasetBalancer
-    from srcs.utils.common import setup_logging
+    from srcs.utils.common import get_logger, setup_logging
 
 
 def main():
@@ -61,31 +61,31 @@ def main():
 
 def analyze_distribution(target_dir: str) -> None:
     """Analyze distribution of balanced dataset"""
-    import logging
+    logger = get_logger(__name__)
 
     target_path = Path(target_dir)
     if not target_path.exists():
-        logging.warning("Target directory doesn't exist: %s", target_dir)
+        logger.warning("Target directory doesn't exist: %s", target_dir)
         return
 
-    logging.info("Analyzing distribution of balanced dataset...")
+    logger.info("Analyzing distribution of balanced dataset...")
     rows = count_images(target_path, None)
 
     if not rows:
-        logging.warning("No images found in target directory")
+        logger.warning("No images found in target directory")
         return
 
     out_dir = target_path.parent / "artifacts" / "distribution"
     csv_path = out_dir / "balanced_distribution.csv"
 
     merge_csv(rows, csv_path)
-    logging.info("Distribution CSV written: %s", csv_path.resolve())
+    logger.info("Distribution CSV written: %s", csv_path.resolve())
 
     plot_per_plant(rows, out_dir)
-    logging.info("Distribution plots written: %s", out_dir.resolve())
+    logger.info("Distribution plots written: %s", out_dir.resolve())
 
     total = sum(n for _, _, n in rows)
-    logging.info("Total balanced images: %d", total)
+    logger.info("Total balanced images: %d", total)
 
 
 if __name__ == "__main__":
