@@ -1,8 +1,11 @@
 import json
-import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+
+from srcs.utils.common import get_logger
+
+logger = get_logger(__name__)
 
 
 class DistributionAnalyzer:
@@ -31,11 +34,11 @@ class DistributionAnalyzer:
         return self.counts
 
     def display_distribution(self):
-        logging.info("Analyzing dataset distribution...")
+        logger.info("Analyzing dataset distribution...")
         for plant, classes in sorted(self.counts.items()):
-            logging.info(f"\n[{plant}]")
+            logger.info(f"\n[{plant}]")
             for class_name, count in sorted(classes.items()):
-                logging.info(f"  {class_name}: {count} images")
+                logger.info(f"  {class_name}: {count} images")
 
 
 class AugmentationPlanner:
@@ -44,7 +47,7 @@ class AugmentationPlanner:
         self.plan = {}
 
     def calculate_plan(self):
-        logging.info("Calculating augmentation plan...")
+        logger.info("Calculating augmentation plan...")
 
         deficits = {}
         for _plant, classes in self.counts.items():
@@ -55,7 +58,7 @@ class AugmentationPlanner:
                     deficits[class_name] = deficit
 
         if not deficits:
-            logging.info("Dataset already balanced - no augmentations needed")
+            logger.info("Dataset already balanced - no augmentations needed")
             return {}
 
         transformations = ["flip", "rotate", "skew", "shear", "crop", "distortion"]
@@ -76,12 +79,12 @@ class AugmentationPlanner:
         return plan
 
     def _display_plan(self, deficits):
-        logging.info("Execution plan:")
+        logger.info("Execution plan:")
         for class_name, deficit in sorted(deficits.items()):
-            logging.info(f"  Class: {class_name} - {deficit} images needed")
+            logger.info(f"  Class: {class_name} - {deficit} images needed")
             if class_name in self.plan:
                 for transform_name, count in sorted(self.plan[class_name].items()):
-                    logging.info(f"    - {transform_name}: {count} images")
+                    logger.info(f"    - {transform_name}: {count} images")
 
 
 class ManifestGenerator:
@@ -92,7 +95,7 @@ class ManifestGenerator:
         self.workers = workers
 
     def generate_augmented_manifest(self):
-        logging.info("Generating augmented manifest...")
+        logger.info("Generating augmented manifest...")
 
         augmented_items = []
 
@@ -169,7 +172,7 @@ class ManifestGenerator:
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2, ensure_ascii=False)
 
-        logging.info(f"Augmented manifest saved: {output_path}")
-        logging.info(f"  Total images: {manifest['meta']['total_images']}")
-        logging.info(f"  Original: {manifest['meta']['original_images']}")
-        logging.info(f"  Augmented: {manifest['meta']['augmented_images']}")
+        logger.info(f"Augmented manifest saved: {output_path}")
+        logger.info(f"  Total images: {manifest['meta']['total_images']}")
+        logger.info(f"  Original: {manifest['meta']['original_images']}")
+        logger.info(f"  Augmented: {manifest['meta']['augmented_images']}")

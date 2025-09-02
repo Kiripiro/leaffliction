@@ -1,4 +1,3 @@
-import logging
 import random
 import shutil
 from collections import defaultdict
@@ -11,9 +10,10 @@ from srcs.preprocessing.dataset_components import (
     ManifestGenerator,
 )
 from srcs.preprocessing.image_augmenter import ImageAugmenter
+from srcs.utils.common import get_logger
 from srcs.utils.system_info import get_optimal_worker_count
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class DatasetBalancer:

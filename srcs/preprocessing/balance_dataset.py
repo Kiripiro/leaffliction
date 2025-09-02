@@ -23,6 +23,10 @@ def main():
         description="Balance leaf disease dataset with augmentations"
     )
     parser.add_argument(
+        "manifest_path",
+        help="Path to the manifest.json file",
+    )
+    parser.add_argument(
         "--workers",
         type=int,
         default=None,
@@ -30,9 +34,10 @@ def main():
     )
     args = parser.parse_args()
 
-    manifest_path = "../../datasets/manifest_split.json"
-    source_dir = "../../images"
-    target_dir = "../../augmented_directory"
+    project_root = Path(__file__).resolve().parents[2]
+    manifest_path = args.manifest_path
+    source_dir = project_root / "images"
+    target_dir = project_root / "augmented_directory"
     seed = 42
 
     balancer = DatasetBalancer(
