@@ -1,9 +1,9 @@
 plant,class,count
-Apple,Apple_Black_rot,620
+Apple,Apple_Black_rot,1640
 Apple,Apple_healthy,1640
-Apple,Apple_rust,275
-Apple,Apple_scab,629
-Grape,Grape_Black_rot,1178
+Apple,Apple_rust,1640
+Apple,Apple_scab,1640
+Grape,Grape_Black_rot,1382
 Grape,Grape_Esca,1382
-Grape,Grape_healthy,422
-Grape,Grape_spot,1075
+Grape,Grape_healthy,1382
+Grape,Grape_spot,1382

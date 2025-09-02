@@ -3,7 +3,13 @@ from __future__ import annotations
 import logging
 import sys
 
-__all__ = ["setup_logging"]
+__all__ = ["setup_logging", "get_logger"]
+
+
+def get_logger(name: str) -> logging.Logger:
+    if not logging.getLogger().handlers:
+        setup_logging()
+    return logging.getLogger(name)
 
 
 def setup_logging(level: str = "INFO") -> None:
