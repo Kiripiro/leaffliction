@@ -8,6 +8,8 @@ logger = get_logger(__name__)
 
 
 class ImageAugmenter:
+    NOISE_LEVEL = 5
+
     def __init__(self, seed=None):
         if seed:
             random.seed(seed)
@@ -114,7 +116,9 @@ class ImageAugmenter:
             with Image.open(image_path) as img:
                 img_array = np.array(img)
 
-                noise = np.random.normal(0, 5, img_array.shape).astype(np.uint8)
+                noise = np.random.normal(0, self.NOISE_LEVEL, img_array.shape).astype(
+                    np.uint8
+                )
                 img_array = np.clip(img_array + noise, 0, 255)
 
                 img = Image.fromarray(img_array)

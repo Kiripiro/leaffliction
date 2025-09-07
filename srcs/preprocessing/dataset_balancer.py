@@ -123,6 +123,7 @@ class DatasetBalancer:
                             "output_path": str(output_path),
                             "transform_name": transform_name,
                             "class_name": class_name,
+                            "seed": random.randint(0, 1000000),
                         }
                     )
 
@@ -192,7 +193,7 @@ class DatasetBalancer:
 
 def _process_single_transformation(task):
     try:
-        transformer = ImageAugmenter(seed=42)
+        transformer = ImageAugmenter(seed=task["seed"])
         transform_method = getattr(transformer, task["transform_name"])
         return transform_method(task["source_img"], task["output_path"])
     except Exception:

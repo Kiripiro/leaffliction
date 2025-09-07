@@ -58,10 +58,6 @@ def get_system_info() -> Dict[str, Union[int, bool, str]]:
         "optimal_workers": get_optimal_worker_count(),
         "apple_silicon": cpu["is_apple_silicon"],
     }
-    if info["apple_silicon"]:
-        info["optimal_workers"] = min(
-            8, int(info["available_cores"]) if info["available_cores"] else 1
-        )
     return info
 
 
