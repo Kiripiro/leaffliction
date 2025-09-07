@@ -15,7 +15,7 @@ from typing import Dict, Iterable, List, Mapping
 try:
     from srcs.utils.common import setup_logging
 except ModuleNotFoundError:
-    import _path_bootstrap  # noqa: F401
+    from srcs.utils import _path_bootstrap  # noqa: F401
     from srcs.utils.common import setup_logging
 
 
