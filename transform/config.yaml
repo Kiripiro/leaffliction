@@ -4,55 +4,79 @@
 
 # --- General ---
 # Gaussian blur sigma used in the Blur step (fallback)
-gaussian_sigma: 1.2
+gaussian_sigma: 1.5
 
 # ROI output size (H, W)
-roi_size: [224, 224]
+roi_size: [256, 256]
 
 # Total number of pseudo-landmarks to place (border/veins/anomalies balanced)
-landmarks_count: 64
+landmarks_count: 80
 
 # --- Masking (segmentation) ---
 # Strategy: auto | hsv_s | hsv_v_dark | hsv_h | lab | kmeans
-mask_strategy: auto
+# Changed to hsv_h for better color-based leaf detection
+mask_strategy: hsv_h
 
 # Background bias helps k-means pick the correct cluster:
 #   light_bg for bright backgrounds, dark_bg for dark backgrounds, or leave null
 bg_bias: light_bg
 
-# Refine the best mask with GrabCut (1 iteration) and keep it if it scores better
+# Refine the best mask with GrabCut (2 iterations) for better edge refinement
 grabcut_refine: true
 
-# Expected green hue range [lo, hi] for typical green leaves (0–180 in OpenCV)
-# If your leaves are not green (bronze/red/yellow), widen to [0, 180]
-green_hue_range: [30, 95]
+# Extended hue range for diseased leaves (yellow, brown, red spots)
+# Covers green healthy leaves + diseased variations
+green_hue_range: [15, 110]
 
-# Object size sanity bounds as fraction of image area
-# Tighten max to reject leaf+shadow unions on simple backgrounds
-min_object_area_ratio: 0.30
-max_object_area_ratio: 0.60
+# Relaxed object size bounds for better leaf capture
+# Allows smaller diseased areas and larger leaf+stem combinations
+min_object_area_ratio: 0.15
+max_object_area_ratio: 0.85
 
-# Fill small holes inside the mask (pixels)
-fill_size: 500
+# Increased fill size for diseased leaves with holes/spots
+fill_size: 800
 
-# Morphological kernel (odd). Lower values reduce over-connection with shadows
-morph_kernel: 3
+# Larger morphological kernel for better leaf boundary cleaning
+morph_kernel: 5
 
-# Optional pre-upscaling improves edge quality before segmentation
-# Either use a factor (>1.0) or a target long side in pixels. Factor takes precedence.
-mask_upscale_factor: 1.0
-mask_upscale_long_side: 1600
+# Enhanced upscaling for better edge detection on small images
+mask_upscale_factor: 1.2
+mask_upscale_long_side: 1400
 
 # --- Shadow suppression ---
 # Remove low-V, low-S, non-green pixels from the mask candidate and re-score
 shadow_suppression: true
 
 # Max saturation to consider a pixel as shadow when V is low
-shadow_s_max: 60
+shadow_s_max: 45
 
 # How to pick the V threshold: otsu | percentile
-shadow_v_method: percentile
-shadow_v_percentile: 30  # raise to 35–40 if shadows still leak in
+shadow_v_method: otsu
+shadow_v_percentile: 35  # Improved threshold for better shadow handling
+
+# Additional shadow removal parameters for better detection
+shadow_min_green_fraction: 0.3
+shadow_morphology_kernel: 3
+
+# --- Disease-specific optimizations ---
+# Enable adaptive thresholding for varying lighting conditions
+adaptive_threshold: true
+adaptive_block_size: 11
+adaptive_c_constant: 2
+
+# Multi-scale analysis for better edge detection
+edge_detection_scales: [0.8, 1.0, 1.2]
+edge_sigma_ratio: 0.5
+
+# Color space combinations for robust detection
+color_spaces: ["hsv", "lab", "yuv"]
+combine_masks: true
+
+# Noise reduction parameters
+noise_reduction: true
+bilateral_d: 9
+bilateral_sigma_color: 75
+bilateral_sigma_space: 75
 
 # Legacy option used by the fallback simple pipeline
 hsv_channel_for_mask: s
