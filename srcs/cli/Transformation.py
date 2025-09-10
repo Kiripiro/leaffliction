@@ -36,6 +36,7 @@ DEFAULT_TYPES = (
     "Analyze",
     "Landmarks",
     "Hist",
+    "Brown",
 )
 # Case-insensitive alias map to canonical transform names
 CANONICAL_TYPES: Dict[str, str] = {
@@ -49,6 +50,9 @@ CANONICAL_TYPES: Dict[str, str] = {
     "pseudo-landmarks": "Landmarks",
     "hist": "Hist",
     "histogram": "Hist",
+    "brown": "Brown",
+    "disease": "Brown",
+    "spots": "Brown",
 }
 
 
@@ -82,6 +86,15 @@ class TransformConfig:
     )
     shadow_v_method: str = "otsu"  # 'otsu' | 'percentile'
     shadow_v_percentile: int = 30  # used when method=percentile
+    # Brown/Disease Detection
+    brown_hue_range: Tuple[int, int] = (5, 25)
+    brown_s_min: int = 40
+    brown_v_max: int = 180
+    brown_min_area_px: int = 100
+    brown_morph_kernel: int = 3
+    use_lab_brown: bool = False
+    lab_b_min: int = 135
+    lab_a_min: int = 125
 
 
 @dataclass(frozen=True)
@@ -153,6 +166,22 @@ def load_config(path: Optional[Path]) -> TransformConfig:
             shadow_v_percentile=int(
                 data.get("shadow_v_percentile", TransformConfig.shadow_v_percentile)
             ),
+            brown_hue_range=tuple(
+                data.get("brown_hue_range", TransformConfig.brown_hue_range)
+            ),
+            brown_s_min=int(data.get("brown_s_min", TransformConfig.brown_s_min)),
+            brown_v_max=int(data.get("brown_v_max", TransformConfig.brown_v_max)),
+            brown_min_area_px=int(
+                data.get("brown_min_area_px", TransformConfig.brown_min_area_px)
+            ),
+            brown_morph_kernel=int(
+                data.get("brown_morph_kernel", TransformConfig.brown_morph_kernel)
+            ),
+            use_lab_brown=bool(
+                data.get("use_lab_brown", TransformConfig.use_lab_brown)
+            ),
+            lab_b_min=int(data.get("lab_b_min", TransformConfig.lab_b_min)),
+            lab_a_min=int(data.get("lab_a_min", TransformConfig.lab_a_min)),
         )
     except Exception as exc:
         logging.warning("Failed to read config (%s), using defaults", exc)
@@ -214,68 +243,85 @@ class TransformPipeline:
 
     # --- core steps ---
     def blur(self, rgb):
+        """Create a saliency map showing important regions in white/gray
+        and less important in black"""
         import cv2
         import numpy as np
-        from plantcv import plantcv as pcv  # type: ignore
 
-        # Base Gaussian blur (fallback when no mask)
-        blurred = pcv.gaussian_blur(
-            img=rgb, ksize=(3, 3), sigma_x=self.cfg.gaussian_sigma, sigma_y=0
-        )
-
-        # Leaf mask
+        # Get leaf mask
         mask, _ = self.make_mask(rgb)
         if mask is None:
-            return blurred
-        m2 = (mask > 0) if mask.ndim == 2 else (mask[..., 0] > 0)
+            return rgb
 
-        # Gentler inner mask to allow more area
-        k_inner = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        inner = cv2.erode((m2.astype(np.uint8) * 255), k_inner, iterations=1) > 0
+        leaf_mask = (mask > 0) if mask.ndim == 2 else (mask[..., 0] > 0)
 
-        # Edges: slightly lower thresholds and light dilation (seed only)
+        # Create saliency map
         gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-        edges = cv2.Canny(gray, threshold1=100, threshold2=200, L2gradient=True)
-        k3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        edges_d = cv2.dilate(edges, k3, iterations=1)
+        saliency = np.zeros_like(gray, dtype=np.float32)
 
-        hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
-        v = hsv[..., 2]
-        _, v_otsu = cv2.threshold(v, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        v_otsu = cv2.morphologyEx(v_otsu, cv2.MORPH_OPEN, k3)
-        num, labels, stats, _ = cv2.connectedComponentsWithStats(v_otsu, connectivity=8)
-        v_filt = np.zeros_like(v_otsu)
-        min_area = max(50, int(0.002 * m2.sum()))
-        for i in range(1, num):
-            if stats[i, cv2.CC_STAT_AREA] >= min_area:
-                v_filt[labels == i] = 255
+        # 1. Edge saliency (veins, leaf borders)
+        edges = cv2.Canny(gray, threshold1=50, threshold2=150, L2gradient=True)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        edges_dilated = cv2.dilate(edges, kernel, iterations=1)
+        saliency += edges_dilated.astype(np.float32) * 0.4
 
-        # Seed salient regions inside the leaf
-        seed = (((edges_d > 0) | (v_filt > 0)) & inner).astype(np.uint8) * 255
+        # 2. Texture/gradient saliency
+        grad_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+        grad_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+        gradient_mag = cv2.magnitude(grad_x, grad_y)
+        gradient_norm = cv2.normalize(
+            gradient_mag, None, 0, 255, cv2.NORM_MINMAX
+        ).astype(np.uint8)
+        saliency += gradient_norm.astype(np.float32) * 0.3
 
-        # Grow and homogenize salient regions
-        k7 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-        closed = cv2.morphologyEx(seed, cv2.MORPH_CLOSE, k7, iterations=1)
-        dil = cv2.dilate(closed, k7, iterations=1)
+        # 3. Brown/disease region saliency
+        if hasattr(self.cfg, "brown_hue_range"):
+            hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+            h, s, v = cv2.split(hsv)
+            lo, hi = self.cfg.brown_hue_range
+            brown_regions = (
+                (h >= lo)
+                & (h <= hi)
+                & (s >= self.cfg.brown_s_min)
+                & (v <= self.cfg.brown_v_max)
+                & leaf_mask
+            )
 
-        # Fill holes
-        inv = cv2.bitwise_not(dil)
-        h, w = inv.shape
-        ff = inv.copy()
-        mask_ff = np.zeros((h + 2, w + 2), np.uint8)
-        cv2.floodFill(ff, mask_ff, (0, 0), 255)
-        holes = cv2.bitwise_not(ff)
-        filled = cv2.bitwise_or(dil, holes)
+            # Clean and dilate brown regions for better visibility
+            brown_clean = cv2.morphologyEx(
+                brown_regions.astype(np.uint8) * 255, cv2.MORPH_CLOSE, kernel
+            )
+            brown_dilated = cv2.dilate(brown_clean, kernel, iterations=2)
+            saliency += (
+                brown_dilated.astype(np.float32) * 0.6
+            )  # Higher weight for disease
 
-        # Clean small noise
-        clean = cv2.morphologyEx(filled, cv2.MORPH_OPEN, k3, iterations=1)
+        # 4. Color variation saliency (areas with unusual colors)
+        blurred_rgb = cv2.GaussianBlur(rgb, (15, 15), 0)
+        color_diff = np.mean(
+            np.abs(rgb.astype(np.float32) - blurred_rgb.astype(np.float32)), axis=2
+        )
+        color_diff_norm = cv2.normalize(color_diff, None, 0, 255, cv2.NORM_MINMAX)
+        saliency += color_diff_norm * 0.2
 
-        important = clean > 0
+        # Normalize saliency map
+        saliency_norm = cv2.normalize(saliency, None, 0, 255, cv2.NORM_MINMAX).astype(
+            np.uint8
+        )
 
-        # Map: important -> black, others -> white
-        out = np.full_like(blurred, 255)
-        out[important] = 0
-        return out
+        # Apply Gaussian blur for smooth transitions
+        saliency_blurred = cv2.GaussianBlur(
+            saliency_norm, (5, 5), self.cfg.gaussian_sigma
+        )
+
+        # Mask to leaf area only
+        result = np.zeros_like(gray)
+        result[leaf_mask] = saliency_blurred[leaf_mask]
+
+        # Convert to 3-channel for consistency with other outputs
+        result_rgb = cv2.cvtColor(result, cv2.COLOR_GRAY2RGB)
+
+        return result_rgb
 
     def make_mask(self, rgb):  # noqa: C901
         import cv2
@@ -542,6 +588,59 @@ class TransformPipeline:
             mask = self._contour_to_mask(opened.shape[:2], cnt)
             best_mask, best_cnt = mask, cnt
 
+        # Extend mask to include brown/diseased areas
+        if best_mask is not None:
+            # Detect brown regions without leaf mask constraint
+            if self.cfg.use_lab_brown:
+                lab = cv2.cvtColor(rgb_work, cv2.COLOR_RGB2LAB)
+                l_ch, a_ch, b_ch = cv2.split(lab)
+                brown_regions = (a_ch >= self.cfg.lab_a_min) & (
+                    b_ch >= self.cfg.lab_b_min
+                )
+            else:
+                hsv = cv2.cvtColor(rgb_work, cv2.COLOR_RGB2HSV)
+                h_ch, s_ch, v_ch = cv2.split(hsv)
+                lo, hi = self.cfg.brown_hue_range
+                brown_regions = (
+                    (h_ch >= lo)
+                    & (h_ch <= hi)
+                    & (s_ch >= self.cfg.brown_s_min)
+                    & (v_ch <= self.cfg.brown_v_max)
+                )
+
+            # Clean brown regions
+            k_brown = cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE,
+                (self.cfg.brown_morph_kernel, self.cfg.brown_morph_kernel),
+            )
+            brown_clean = cv2.morphologyEx(
+                brown_regions.astype(np.uint8) * 255, cv2.MORPH_OPEN, k_brown
+            )
+            brown_clean = cv2.morphologyEx(brown_clean, cv2.MORPH_CLOSE, k_brown)
+
+            # Filter brown regions by size
+            num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+                brown_clean, connectivity=8
+            )
+            filtered_brown = np.zeros_like(brown_clean)
+            for i in range(1, num_labels):
+                area = stats[i, cv2.CC_STAT_AREA]
+                if area >= self.cfg.brown_min_area_px:
+                    filtered_brown[labels == i] = 255
+
+            # Extend original mask to include brown regions
+            extended_mask = ((best_mask > 0) | (filtered_brown > 0)).astype(
+                np.uint8
+            ) * 255
+
+            # Find new contour for extended mask
+            cnts, _ = cv2.findContours(
+                extended_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+            if cnts:
+                extended_cnt = max(cnts, key=cv2.contourArea)
+                best_mask, best_cnt = extended_mask, extended_cnt
+
         if abs(s - 1.0) < 1e-6:
             return best_mask, best_cnt
         # Resize mask back
@@ -677,41 +776,11 @@ class TransformPipeline:
         edge_bool = (edges > 0) & m2
         overlay[edge_bool] = (0, 255, 255)  # cyan edges
 
-        # Textual metrics
-        area = float(cv2.contourArea(contour))
-        peri = float(cv2.arcLength(contour, True))
-        circularity = (4.0 * 3.1415926535 * area / (peri * peri)) if peri > 0 else 0.0
-        # Three-line text for better readability
-        cv2.putText(
-            overlay,
-            f"Area={area:.0f}",
-            (10, 24),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (255, 0, 0),
-            2,
-            cv2.LINE_AA,
-        )
-        cv2.putText(
-            overlay,
-            f"Perimeter={peri:.1f}",
-            (10, 48),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (255, 0, 0),
-            2,
-            cv2.LINE_AA,
-        )
-        cv2.putText(
-            overlay,
-            f"Circularity={circularity:.3f}",
-            (10, 72),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (255, 0, 0),
-            2,
-            cv2.LINE_AA,
-        )
+        # Textual metrics (calculated but not displayed)
+        # area = float(cv2.contourArea(contour))
+        # peri = float(cv2.arcLength(contour, True))
+        # circularity = (4.0 * 3.1415926535 * area / (peri * peri)) if peri > 0 else 0.0
+
         return overlay
 
     def pseudolandmarks(self, rgb, contour):  # noqa: C901
@@ -721,23 +790,70 @@ class TransformPipeline:
         if contour is None:
             return draw_text(rgb, "Landmarks: no object")
 
-        # Leaf mask to constrain interior detections
+        # Create enhanced leaf mask that includes brown spots
         mask, _ = self.make_mask(rgb)
-        mask_bool = None
         if mask is not None:
-            mask_bool = (mask > 0) if mask.ndim == 2 else (mask[..., 0] > 0)
+            # Get brown spots
+            if mask.ndim == 2:
+                leaf_mask = mask > 0
+            else:
+                leaf_mask = mask[..., 0] > 0
+
+            # Detect brown regions
+            if self.cfg.use_lab_brown:
+                lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)
+                l, a, b = cv2.split(lab)
+                brown_regions = (
+                    (a >= self.cfg.lab_a_min) & (b >= self.cfg.lab_b_min) & leaf_mask
+                )
+            else:
+                hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+                h, s, v = cv2.split(hsv)
+                lo, hi = self.cfg.brown_hue_range
+                brown_regions = (
+                    (h >= lo)
+                    & (h <= hi)
+                    & (s >= self.cfg.brown_s_min)
+                    & (v <= self.cfg.brown_v_max)
+                    & leaf_mask
+                )
+
+            # Combine original leaf mask with brown regions
+            k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            brown_clean = cv2.morphologyEx(
+                brown_regions.astype(np.uint8) * 255, cv2.MORPH_CLOSE, k
+            )
+
+            # Create enhanced mask
+            enhanced_mask = (leaf_mask.astype(np.uint8) * 255) | brown_clean
+            enhanced_mask = cv2.morphologyEx(enhanced_mask, cv2.MORPH_CLOSE, k)
+
+            # Find enhanced contour
+            cnts, _ = cv2.findContours(
+                enhanced_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
+            if cnts:
+                enhanced_contour = max(cnts, key=cv2.contourArea)
+                contour = enhanced_contour  # Use enhanced contour for landmarks
+
+            mask_bool = enhanced_mask > 0
+        else:
+            mask_bool = None
 
         vis = rgb.copy()
         total = max(1, int(self.cfg.landmarks_count))
-        # Balanced quotas (border/veins/anomalies)
+        # Rebalanced quotas (border/veins/disease seulement)
         border_quota = max(1, total // 3)
         vein_quota = max(1, total // 3)
-        anomaly_quota = max(1, total - border_quota - vein_quota)
+        disease_quota = max(
+            1, total - border_quota - vein_quota
+        )  # Le reste pour diseases
 
         # Colors
         COL_BORDER = (255, 0, 0)  # blue when saved
         COL_VEIN = (0, 0, 255)  # red when saved
-        COL_ANOM = (42, 42, 165)  # brown-ish when saved
+        # COL_ANOM = (42, 42, 165)  # brown-ish when saved
+        COL_DISEASE = (139, 69, 19)  # dark brown for disease spots
 
         # 1) Border points: resample along contour
         c_pts = self._resample_contour(contour, border_quota)
@@ -755,18 +871,17 @@ class TransformPipeline:
         # Prepare helpers
         gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
         inner_mask = None
-        inner_mask_strict = None
         if mask_bool is not None:
             # Lightly erode for inner mask to avoid border influence
             k_inner = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
             inner_mask = cv2.erode(
                 (mask_bool.astype(np.uint8) * 255), k_inner, iterations=1
             )
-            # Stricter inner mask for anomaly placement
-            k_inner5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-            inner_mask_strict = cv2.erode(
-                (mask_bool.astype(np.uint8) * 255), k_inner5, iterations=1
-            )
+            # Stricter inner mask for anomaly placement (commented out as unused)
+            # k_inner5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            # inner_mask_strict = cv2.erode(
+            #     (mask_bool.astype(np.uint8) * 255), k_inner5, iterations=1
+            # )
 
         # 2) Vein points (edges inside leaf) — moderate, robust settings
         try:
@@ -831,82 +946,211 @@ class TransformPipeline:
         except Exception:
             pass
 
-        # 3) Anomaly points — conservative, targeted settings
+        # 3) Disease points (brown/diseased areas) - remplace les anomalies
         try:
-            hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
-            h, s, v = cv2.split(hsv)
-            # Dark via Otsu (inverted)
-            _, dark = cv2.threshold(v, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-            # Brownish range and saturation/value constraints
-            brown_low, brown_high = 5, 35
-            brown_h = (h >= brown_low) & (h <= brown_high)
-            brown_s = s >= 50
-            brown_v = v <= 210
-            brown = (brown_h & brown_s & brown_v).astype(np.uint8) * 255
-            lesion = cv2.bitwise_or(dark, brown)
-            k5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-            lesion = cv2.morphologyEx(lesion, cv2.MORPH_OPEN, k5)
-            lesion = cv2.morphologyEx(lesion, cv2.MORPH_CLOSE, k5)
-            # Exclude border band
-            if inner_mask_strict is not None:
-                lesion = cv2.bitwise_and(lesion, lesion, mask=inner_mask_strict)
-            num, labels, stats, centroids = cv2.connectedComponentsWithStats(
-                lesion, connectivity=8
-            )
-            comps = [
-                (i, stats[i, cv2.CC_STAT_AREA], tuple(centroids[i]))
-                for i in range(1, num)
-            ]
-            comps.sort(key=lambda t: t[1], reverse=True)
+            # Detect brown regions using the same logic as detect_brown_spots
+            if self.cfg.use_lab_brown:
+                lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)
+                l, a, b = cv2.split(lab)
+                brown_regions = (a >= self.cfg.lab_a_min) & (b >= self.cfg.lab_b_min)
+            else:
+                hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+                h, s, v = cv2.split(hsv)
+                lo, hi = self.cfg.brown_hue_range
+                brown_regions = (
+                    (h >= lo)
+                    & (h <= hi)
+                    & (s >= self.cfg.brown_s_min)
+                    & (v <= self.cfg.brown_v_max)
+                )
 
-            placed = 0
-            for i, _area, (cx, cy) in comps:
-                if placed >= anomaly_quota:
+            # Constrain to leaf area
+            if mask_bool is not None:
+                brown_regions = brown_regions & mask_bool
+
+            # Clean up noise
+            k_brown = cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE,
+                (self.cfg.brown_morph_kernel, self.cfg.brown_morph_kernel),
+            )
+            brown_clean = cv2.morphologyEx(
+                brown_regions.astype(np.uint8) * 255, cv2.MORPH_OPEN, k_brown
+            )
+            brown_clean = cv2.morphologyEx(brown_clean, cv2.MORPH_CLOSE, k_brown)
+
+            # Find disease components and place landmarks
+            num_brown, labels_brown, stats_brown, centroids_brown = (
+                cv2.connectedComponentsWithStats(brown_clean, connectivity=8)
+            )
+            brown_comps = [
+                (i, stats_brown[i, cv2.CC_STAT_AREA], tuple(centroids_brown[i]))
+                for i in range(1, num_brown)
+                if stats_brown[i, cv2.CC_STAT_AREA] >= self.cfg.brown_min_area_px
+            ]
+            brown_comps.sort(key=lambda t: t[1], reverse=True)
+
+            disease_placed = 0
+            total_brown_area = sum(comp[1] for comp in brown_comps)
+
+            # Calculate proportional disease quota based on brown area
+            # Densité modérée : 1 point par 50px (compromis entre précision et
+            # faisabilité)
+            calculated_disease_quota = max(len(brown_comps), total_brown_area // 50)
+            actual_disease_quota = min(
+                calculated_disease_quota, disease_quota * 5
+            )  # Allow more than base quota
+
+            logging.info(
+                f"Brown area analysis: {total_brown_area} px in "
+                f"{len(brown_comps)} regions → calculated quota: "
+                f"{calculated_disease_quota}, using: {actual_disease_quota}"
+            )
+
+            for i, area, (cx, cy) in brown_comps:
+                if disease_placed >= actual_disease_quota:
                     break
-                comp_mask = (labels == i).astype(np.uint8) * 255
-                need = min(max(1, anomaly_quota - placed), 10)
-                corners = cv2.goodFeaturesToTrack(
+
+                # For larger disease areas, place multiple points proportionally
+                comp_mask = (labels_brown == i).astype(np.uint8) * 255
+                points_for_comp = max(
+                    1, min(area // 40, actual_disease_quota - disease_placed)
+                )  # 1 point per 40px
+
+                disease_corners = cv2.goodFeaturesToTrack(
                     image=gray,
-                    maxCorners=need,
-                    qualityLevel=0.01,
-                    minDistance=6,
+                    maxCorners=points_for_comp * 3,  # Get more candidates
+                    qualityLevel=0.005,  # Lower quality threshold
+                    minDistance=3,  # Reduced min distance for higher density
                     mask=comp_mask,
                     blockSize=3,
                     useHarrisDetector=False,
                     k=0.04,
                 )
-                if corners is not None and len(corners) > 0:
-                    corners = np.squeeze(corners, axis=1)
-                    for x, y in corners:
+
+                if disease_corners is not None and len(disease_corners) > 0:
+                    disease_corners = np.squeeze(disease_corners, axis=1)
+                    for x, y in disease_corners[:points_for_comp]:
                         cv2.circle(
-                            vis, (int(x), int(y)), 3, COL_ANOM, -1, lineType=cv2.LINE_AA
+                            vis,
+                            (int(x), int(y)),
+                            4,
+                            COL_DISEASE,
+                            -1,
+                            lineType=cv2.LINE_AA,
                         )
-                        placed += 1
-                        if placed >= anomaly_quota:
+                        disease_placed += 1
+                        if disease_placed >= disease_quota:
                             break
                 else:
+                    # Fallback to centroid
                     cv2.circle(
-                        vis, (int(cx), int(cy)), 3, COL_ANOM, -1, lineType=cv2.LINE_AA
+                        vis,
+                        (int(cx), int(cy)),
+                        4,
+                        COL_DISEASE,
+                        -1,
+                        lineType=cv2.LINE_AA,
                     )
-                    placed += 1
+                    disease_placed += 1
 
-            # If nothing found at all, add one darkest point inside strict mask
-            if placed == 0 and inner_mask_strict is not None:
-                v2 = v.copy()
-                v2[inner_mask_strict == 0] = 255
-                min_loc = np.unravel_index(np.argmin(v2), v2.shape)
-                cv2.circle(
-                    vis,
-                    (int(min_loc[1]), int(min_loc[0])),
-                    3,
-                    COL_ANOM,
-                    -1,
-                    lineType=cv2.LINE_AA,
+            if disease_placed > 0:
+                total_brown_px = sum(comp[1] for comp in brown_comps)
+                logging.info(
+                    f"Disease landmarks placed: {disease_placed} points on "
+                    f"{len(brown_comps)} brown regions "
+                    f"(total brown area: {total_brown_px} px)"
                 )
-        except Exception:
-            pass
+            else:
+                logging.info(
+                    "No disease landmarks placed - no brown regions detected "
+                    "or regions too small"
+                )
+
+        except Exception as e:
+            logging.warning(f"Failed to detect disease landmarks: {e}")
+
+        # Final summary log
+        total_landmarks = border_quota + vein_quota + disease_placed
+        logging.info(
+            f"Landmarks summary: {border_quota} border + {vein_quota} veins + "
+            f"{disease_placed} disease points = {total_landmarks} total landmarks"
+        )
 
         return vis
+
+    def detect_brown_spots(self, rgb, mask):
+        """Detect brown/diseased areas in leaf"""
+        import cv2
+        import numpy as np
+
+        if mask is None:
+            return rgb, 0.0, 0
+
+        # Create leaf-only region
+        if mask.ndim == 2:
+            leaf_mask = mask > 0
+        else:
+            leaf_mask = mask[..., 0] > 0
+
+        if self.cfg.use_lab_brown:
+            # LAB-based detection
+            lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)
+            l, a, b = cv2.split(lab)
+            brown_regions = (
+                (a >= self.cfg.lab_a_min) & (b >= self.cfg.lab_b_min) & leaf_mask
+            )
+        else:
+            # HSV-based detection
+            hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+            h, s, v = cv2.split(hsv)
+            lo, hi = self.cfg.brown_hue_range
+            brown_regions = (
+                (h >= lo)
+                & (h <= hi)
+                & (s >= self.cfg.brown_s_min)
+                & (v <= self.cfg.brown_v_max)
+                & leaf_mask
+            )
+
+        # Morphological operations to clean up noise
+        k = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (self.cfg.brown_morph_kernel, self.cfg.brown_morph_kernel),
+        )
+        brown_clean = cv2.morphologyEx(
+            brown_regions.astype(np.uint8) * 255, cv2.MORPH_OPEN, k
+        )
+        brown_clean = cv2.morphologyEx(brown_clean, cv2.MORPH_CLOSE, k)
+
+        # Filter by area
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+            brown_clean, connectivity=8
+        )
+        filtered_brown = np.zeros_like(brown_clean)
+        brown_count = 0
+        total_brown_area = 0
+
+        for i in range(1, num_labels):  # Skip background (label 0)
+            area = stats[i, cv2.CC_STAT_AREA]
+            if area >= self.cfg.brown_min_area_px:
+                filtered_brown[labels == i] = 255
+                brown_count += 1
+                total_brown_area += area
+
+        # Calculate percentage of leaf affected
+        leaf_area = np.sum(leaf_mask)
+        brown_percentage = (total_brown_area / max(leaf_area, 1)) * 100
+
+        # Create visualization
+        vis = rgb.copy()
+        vis[filtered_brown > 0] = [255, 100, 0]  # Orange overlay for brown spots
+
+        logging.info(
+            f"Brown spots detected: {brown_count} regions, "
+            f"{brown_percentage:.1f}% of leaf area ({total_brown_area} pixels)"
+        )
+
+        return vis, brown_percentage, brown_count
 
     def histogram_hsv(self, rgb):
         import cv2
@@ -1015,6 +1259,7 @@ def output_names(stem: str) -> Dict[str, str]:
         "Analyze": f"{stem}__T_Analyze.jpg",
         "Landmarks": f"{stem}__T_Landmarks.jpg",
         "Hist": f"{stem}__T_Hist.jpg",
+        "Brown": f"{stem}__T_Brown.jpg",
     }
 
 
@@ -1046,6 +1291,7 @@ def process_single_image(params: ProcessArgs) -> List[Path]:  # noqa: C901
         or "ROI" in params.types
         or "Analyze" in params.types
         or "Landmarks" in params.types
+        or "Brown" in params.types
     ):
         mask_img, contour = pipe.make_mask(rgb)
     if "Mask" in params.types:
@@ -1100,6 +1346,16 @@ def process_single_image(params: ProcessArgs) -> List[Path]:  # noqa: C901
         out = params.out_dir / names["Hist"]
         if params.overwrite or (not params.skip_existing or not out.exists()):
             imwrite_bgr(out, hist_img)
+            saved.append(out)
+
+    # Brown spots detection
+    if "Brown" in params.types:
+        brown_img, brown_percentage, brown_count = pipe.detect_brown_spots(
+            rgb, mask_img
+        )
+        out = params.out_dir / names["Brown"]
+        if params.overwrite or (not params.skip_existing or not out.exists()):
+            imwrite_bgr(out, brown_img)
             saved.append(out)
 
     return saved

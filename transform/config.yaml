@@ -31,7 +31,7 @@ green_hue_range: [15, 110]
 # Relaxed object size bounds for better leaf capture
 # Allows smaller diseased areas and larger leaf+stem combinations
 min_object_area_ratio: 0.15
-max_object_area_ratio: 0.85
+max_object_area_ratio: 0.95
 
 # Increased fill size for diseased leaves with holes/spots
 fill_size: 800
@@ -80,3 +80,16 @@ bilateral_sigma_space: 75
 
 # Legacy option used by the fallback simple pipeline
 hsv_channel_for_mask: s
+
+# --- Brown/Disease Detection ---
+# Brown spot detection parameters
+use_lab_brown: false  # Use HSV instead of LAB for brown detection
+brown_hue_range: [0, 30]  # Wider brown/orange hue range in HSV
+brown_s_min: 20  # Lower minimum saturation for brown regions
+brown_v_max: 200  # Higher maximum value (brightness) for brown regions
+brown_min_area_px: 25  # Lower minimum area in pixels for a brown region
+brown_morph_kernel: 3  # Morphological kernel size for brown region cleaning
+
+# LAB color space brown detection (alternative)
+lab_a_min: 125  # Lower minimum A channel value (green to red axis)
+lab_b_min: 125  # Lower minimum B channel value (blue to yellow axis)
