@@ -473,24 +473,119 @@ class TransformPipeline:
         def suppress_shadow(
             mask_bin: np.ndarray,
         ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-            # Remove low-V & low-S regions (likely shadows) that are not green
+            # ULTRA-AGGRESSIVE shadow suppression - remove ALL dark regions
             hsv = cv2.cvtColor(rgb_work, cv2.COLOR_RGB2HSV)
             Hc, Sc, Vc = cv2.split(hsv)
-            if self.cfg.shadow_v_method == "percentile":
-                v_th = int(
-                    np.percentile(Vc, max(1, min(99, self.cfg.shadow_v_percentile)))
+
+            # Convert to LAB for better shadow detection
+            lab = cv2.cvtColor(rgb_work, cv2.COLOR_RGB2LAB)
+            L_ch, a_ch, b_ch = cv2.split(lab)
+
+            # EXTREMELY AGGRESSIVE shadow detection thresholds
+
+            # Method 1: Very aggressive dark region detection (LAB L < 40th percentile)
+            l_threshold = np.percentile(L_ch, 40)  # Much more aggressive
+            very_dark_lab = L_ch < l_threshold
+
+            # Method 2: High saturation threshold + higher value threshold
+            low_sat_dark = (Sc < 50) & (Vc < 100)  # Much higher thresholds
+
+            # Method 3: Even more aggressive LAB + HSV combination
+            aggressive_shadow = (
+                (L_ch < np.percentile(L_ch, 45)) & (Sc < 60) & (Vc < 120)
+            )
+
+            # Method 4: Detect ALL low-brightness regions
+            very_low_brightness = Vc < 90  # Remove anything darker than 90/255
+
+            # Method 5: LAB lightness aggressive threshold
+            lab_dark = L_ch < np.percentile(L_ch, 50)  # Remove bottom 50% of brightness
+
+            # Method 6: Uniform area detection - more aggressive shadow detection
+            gray = cv2.cvtColor(rgb_work, cv2.COLOR_RGB2GRAY)
+            blur = cv2.GaussianBlur(gray, (15, 15), 0)
+            texture_diff = cv2.absdiff(gray, blur)
+            uniform_areas = texture_diff < 15  # Higher threshold for uniformity
+            shadow_uniform = uniform_areas & (Vc < 100)
+
+            # Method 7: K-means with more clusters for better shadow separation
+            h_img, w_img = rgb_work.shape[:2]
+
+            # Downsample for K-means efficiency
+            scale = min(1.0, 150.0 / max(h_img, w_img))
+            small_h, small_w = int(h_img * scale), int(w_img * scale)
+            rgb_small = cv2.resize(
+                rgb_work, (small_w, small_h), interpolation=cv2.INTER_AREA
+            )
+
+            data = rgb_small.reshape((-1, 3)).astype(np.float32)
+            criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
+
+            try:
+                # Use 5 clusters instead of 4 for better separation
+                _, labels, centers = cv2.kmeans(
+                    data, 5, None, criteria, 10, cv2.KMEANS_PP_CENTERS
                 )
-            else:
-                _t, v_otsu = cv2.threshold(
-                    Vc, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+
+                # Find the TWO darkest clusters
+                brightness_scores = centers.mean(axis=1)
+                sorted_indices = np.argsort(brightness_scores)
+                dark_clusters = sorted_indices[:2]  # Two darkest clusters
+
+                shadow_kmeans_small = np.isin(labels.flatten(), dark_clusters).reshape(
+                    (small_h, small_w)
                 )
-                v_th = int(_t)
-            shadow = (Vc <= v_th) & (Sc <= self.cfg.shadow_s_max)
+
+                # Resize back to original size
+                shadow_kmeans = cv2.resize(
+                    shadow_kmeans_small.astype(np.uint8),
+                    (w_img, h_img),
+                    interpolation=cv2.INTER_NEAREST,
+                ).astype(bool)
+            except Exception:
+                # Fallback if K-means fails
+                shadow_kmeans = np.zeros((h_img, w_img), dtype=bool)
+
+            # More restrictive green preservation - only preserve clearly green regions
             lo, hi = self.cfg.green_hue_range
-            green = (Hc >= lo) & (Hc <= hi) & (Sc >= 40)
-            drop = shadow & (~green)
-            refined = (mask_bin > 0) & (~drop)
+            green_regions = (
+                (Hc >= lo) & (Hc <= hi) & (Sc >= 40) & (Vc >= 60)
+            )  # Must be bright enough
+
+            # Combine ALL shadow detection methods for MAXIMUM removal
+            comprehensive_shadow = (
+                very_dark_lab
+                | low_sat_dark
+                | aggressive_shadow
+                | very_low_brightness
+                | lab_dark
+                | shadow_uniform
+                | shadow_kmeans
+            ) & (
+                ~green_regions
+            )  # Only preserve clearly bright green regions
+
+            # More aggressive morphological cleaning
+            shadow_kernel_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+            shadow_kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+
+            # Dilate shadows to catch transition regions
+            comprehensive_shadow = cv2.dilate(
+                comprehensive_shadow.astype(np.uint8), shadow_kernel_small, iterations=1
+            )
+            comprehensive_shadow = cv2.morphologyEx(
+                comprehensive_shadow, cv2.MORPH_CLOSE, shadow_kernel_large
+            )
+            comprehensive_shadow = comprehensive_shadow.astype(bool)
+
+            # Remove comprehensive shadows from the mask
+            refined = (mask_bin > 0) & (~comprehensive_shadow)
             refined = refined.astype(np.uint8) * 255
+
+            # Aggressive cleaning of the refined mask
+            refined = cv2.morphologyEx(refined, cv2.MORPH_OPEN, shadow_kernel_small)
+            refined = cv2.morphologyEx(refined, cv2.MORPH_CLOSE, shadow_kernel_large)
+
             return postprocess(refined)
 
         # Build candidate masks as before, but on rgb_work
@@ -588,15 +683,22 @@ class TransformPipeline:
             mask = self._contour_to_mask(opened.shape[:2], cnt)
             best_mask, best_cnt = mask, cnt
 
-        # Extend mask to include brown/diseased areas
+        # Extend mask to include brown/diseased areas (but only near the detected leaf)
         if best_mask is not None:
-            # Detect brown regions without leaf mask constraint
+            # Create a dilated mask to define the search area for brown regions
+            search_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (20, 20))
+            search_area = cv2.dilate(best_mask, search_kernel, iterations=2)
+            search_constraint = search_area > 0
+
+            # Detect brown regions constrained to the search area
             if self.cfg.use_lab_brown:
                 lab = cv2.cvtColor(rgb_work, cv2.COLOR_RGB2LAB)
                 l_ch, a_ch, b_ch = cv2.split(lab)
-                brown_regions = (a_ch >= self.cfg.lab_a_min) & (
-                    b_ch >= self.cfg.lab_b_min
-                )
+                brown_regions = (
+                    (a_ch >= self.cfg.lab_a_min)
+                    & (b_ch >= self.cfg.lab_b_min)
+                    & search_constraint
+                )  # Constrain to search area
             else:
                 hsv = cv2.cvtColor(rgb_work, cv2.COLOR_RGB2HSV)
                 h_ch, s_ch, v_ch = cv2.split(hsv)
@@ -606,7 +708,7 @@ class TransformPipeline:
                     & (h_ch <= hi)
                     & (s_ch >= self.cfg.brown_s_min)
                     & (v_ch <= self.cfg.brown_v_max)
-                )
+                ) & search_constraint  # Constrain to search area
 
             # Clean brown regions
             k_brown = cv2.getStructuringElement(
@@ -628,7 +730,7 @@ class TransformPipeline:
                 if area >= self.cfg.brown_min_area_px:
                     filtered_brown[labels == i] = 255
 
-            # Extend original mask to include brown regions
+            # Extend original mask to include brown regions (only those near the leaf)
             extended_mask = ((best_mask > 0) | (filtered_brown > 0)).astype(
                 np.uint8
             ) * 255

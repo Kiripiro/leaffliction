@@ -48,11 +48,11 @@ mask_upscale_long_side: 1400
 shadow_suppression: true
 
 # Max saturation to consider a pixel as shadow when V is low
-shadow_s_max: 45
+shadow_s_max: 80  # Very aggressive - remove even moderately saturated dark areas
 
 # How to pick the V threshold: otsu | percentile
-shadow_v_method: otsu
-shadow_v_percentile: 35  # Improved threshold for better shadow handling
+shadow_v_method: percentile
+shadow_v_percentile: 15  # Extremely aggressive - remove bottom 15% of brightness
 
 # Additional shadow removal parameters for better detection
 shadow_min_green_fraction: 0.3
