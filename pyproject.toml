@@ -1,3 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "leaffliction"
+version = "0.1.0"
+description = "Leaf disease classification: dataset split and Keras training CLI"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "keras>=3.0.0",
+    "tensorflow>=2.15",
+    "pillow",
+    "matplotlib",
+]
+
+[project.scripts]
+leaffliction-train = "srcs.cli.train:main"
+leaffliction-split = "srcs.cli.split:main"
+
+[tool.setuptools]
+packages = ["srcs"]
+
 [tool.black]
 line-length = 88
 target-version = ["py311"]
@@ -5,4 +29,4 @@ target-version = ["py311"]
 [tool.isort]
 profile = "black"
 line_length = 88
-src_paths = ["leaffliction", "tests"]
+src_paths = ["srcs", "tests"]

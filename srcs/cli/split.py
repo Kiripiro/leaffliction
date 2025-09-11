@@ -12,12 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping
 
-try:
-    from srcs.utils.common import setup_logging
-except ModuleNotFoundError:
-    import _path_bootstrap  # noqa: F401
-    from srcs.utils.common import setup_logging
-
+from srcs.utils.common import setup_logging
 
 LOGGER = logging.getLogger(__name__)
 
