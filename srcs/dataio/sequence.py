@@ -76,12 +76,9 @@ class ManifestSequence(Sequence):
         Returns (orig_uint8, x_float32, y) where y may be None when label2idx is None.
         """
         it = self.items[i]
-        # Read base image as uint8 (resized copy used when no external transform)
         if self.transform is not None:
-            # Delegate to provided transform (handles reading + deterministic ops)
             orig_uint8, x_float32 = self.transform(Path(it.src), it, self.img_size)
         else:
-            # Fallback: resize + normalize via Keras utils
             resized = img_to_array(
                 load_img(
                     it.src,
