@@ -300,7 +300,6 @@ def build_and_compile_model(args, cfg: Dict, num_classes: int, train_seq: Any) -
     )
     adapt_normalization(norm_layer, train_seq)
 
-    # Setup learning rate schedule
     steps_per_epoch = len(train_seq)
     if cfg["cosine_decay"]:
         lr_schedule = keras.optimizers.schedules.CosineDecay(
@@ -311,11 +310,9 @@ def build_and_compile_model(args, cfg: Dict, num_classes: int, train_seq: Any) -
     else:
         base_lr = cfg["lr"]
 
-    # Build optimizer and loss
     opt = build_optimizer(cfg, base_lr)
     loss = build_loss(cfg)
 
-    # Compile model
     opt_any: Any = opt
     loss_any: Any = loss
     model.compile(optimizer=opt_any, loss=loss_any, metrics=["accuracy"])
