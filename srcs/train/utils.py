@@ -124,7 +124,7 @@ def save_best_variant(
             meta_out.update(meta)
         with (out_dir / "meta.json").open("w", encoding="utf-8") as f:
             json.dump(meta_out, f, indent=2)
-    except Exception as e:
+    except (OSError, TypeError) as e:
         LOGGER.warning("Failed to write meta.json: %s", e)
 
     confusion_matrix(model, val_data, labels_sorted, out_dir)
