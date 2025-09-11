@@ -63,43 +63,36 @@ CANONICAL_TYPES: Dict[str, str] = {
 
 @dataclass(frozen=True)
 class TransformConfig:
-    gaussian_sigma: float = 1.2
-    hsv_channel_for_mask: str = "s"  # 'h' | 's' | 'v'
-    fill_size: int = 50
-    morph_kernel: int = 5  # odd
-    landmarks_count: int = 64
-    roi_size: Tuple[int, int] = (224, 224)  # (h, w)
+    gaussian_sigma: float
+    hsv_channel_for_mask: str  # 'h' | 's' | 'v'
+    fill_size: int
+    morph_kernel: int  # odd
+    landmarks_count: int
+    roi_size: Tuple[int, int]  # (h, w)
     # New: robust mask options
-    mask_strategy: str = (
-        "auto"  # 'auto' | 'hsv_s' | 'hsv_v_dark' | 'hsv_h' | 'lab' | 'kmeans'
-    )
-    bg_bias: Optional[str] = None  # None|'light_bg'|'dark_bg'
-    grabcut_refine: bool = True
-    green_hue_range: Tuple[int, int] = (
-        30,
-        90,
-    )  # inclusive H range for green-ish leaves
-    min_object_area_ratio: float = 0.01
-    max_object_area_ratio: float = 0.95
+    mask_strategy: str  # 'auto' | 'hsv_s' | 'hsv_v_dark' | 'hsv_h' | 'lab' | 'kmeans'
+    bg_bias: Optional[str]  # None|'light_bg'|'dark_bg'
+    grabcut_refine: bool
+    green_hue_range: Tuple[int, int]  # inclusive H range for green-ish leaves
+    min_object_area_ratio: float
+    max_object_area_ratio: float
     # Optional pre-upscale for mask detection
-    mask_upscale_factor: float = 1.0
-    mask_upscale_long_side: int = 0  # if >0 and image long side < this, upscale to this
+    mask_upscale_factor: float
+    mask_upscale_long_side: int  # if >0 and image long side < this, upscale to this
     # Shadow handling options
-    shadow_suppression: bool = True
-    shadow_s_max: int = (
-        60  # pixels with saturation <= this and low V are considered shadow
-    )
-    shadow_v_method: str = "otsu"  # 'otsu' | 'percentile'
-    shadow_v_percentile: int = 30  # used when method=percentile
+    shadow_suppression: bool
+    shadow_s_max: int  # pixels with saturation <= this and low V are considered shadow
+    shadow_v_method: str  # 'otsu' | 'percentile'
+    shadow_v_percentile: int  # used when method=percentile
     # Brown/Disease Detection
-    brown_hue_range: Tuple[int, int] = (5, 25)
-    brown_s_min: int = 40
-    brown_v_max: int = 180
-    brown_min_area_px: int = 100
-    brown_morph_kernel: int = 3
-    use_lab_brown: bool = False
-    lab_b_min: int = 135
-    lab_a_min: int = 125
+    brown_hue_range: Tuple[int, int]
+    brown_s_min: int
+    brown_v_max: int
+    brown_min_area_px: int
+    brown_morph_kernel: int
+    use_lab_brown: bool
+    lab_b_min: int
+    lab_a_min: int
 
 
 @dataclass(frozen=True)
@@ -114,81 +107,81 @@ class ProcessArgs:
 
 def load_config(path: Optional[Path]) -> TransformConfig:
     if not path:
-        return TransformConfig()
+        logging.error("No configuration file path provided")
+        sys.exit(1)
     if not path.exists():
-        logging.warning("Config not found, using defaults: %s", path)
-        return TransformConfig()
+        logging.error("Configuration file not found: %s", path)
+        sys.exit(1)
     try:
         with path.open("r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
+
+        # Validate that all required fields are present
+        required_fields = [
+            "gaussian_sigma",
+            "hsv_channel_for_mask",
+            "fill_size",
+            "morph_kernel",
+            "landmarks_count",
+            "roi_size",
+            "mask_strategy",
+            "bg_bias",
+            "grabcut_refine",
+            "green_hue_range",
+            "min_object_area_ratio",
+            "max_object_area_ratio",
+            "mask_upscale_factor",
+            "mask_upscale_long_side",
+            "shadow_suppression",
+            "shadow_s_max",
+            "shadow_v_method",
+            "shadow_v_percentile",
+            "brown_hue_range",
+            "brown_s_min",
+            "brown_v_max",
+            "brown_min_area_px",
+            "brown_morph_kernel",
+            "use_lab_brown",
+            "lab_b_min",
+            "lab_a_min",
+        ]
+
+        missing_fields = [field for field in required_fields if field not in data]
+        if missing_fields:
+            logging.error("Missing required configuration fields: %s", missing_fields)
+            sys.exit(1)
+
         return TransformConfig(
-            gaussian_sigma=float(
-                data.get("gaussian_sigma", TransformConfig.gaussian_sigma)
-            ),
-            hsv_channel_for_mask=str(
-                data.get("hsv_channel_for_mask", TransformConfig.hsv_channel_for_mask)
-            ),
-            fill_size=int(data.get("fill_size", TransformConfig.fill_size)),
-            morph_kernel=int(data.get("morph_kernel", TransformConfig.morph_kernel)),
-            landmarks_count=int(
-                data.get("landmarks_count", TransformConfig.landmarks_count)
-            ),
-            roi_size=tuple(
-                data.get("roi_size", TransformConfig.roi_size)
-            ),  # type: ignore
-            mask_strategy=str(data.get("mask_strategy", TransformConfig.mask_strategy)),
-            bg_bias=data.get("bg_bias", TransformConfig.bg_bias),
-            grabcut_refine=bool(
-                data.get("grabcut_refine", TransformConfig.grabcut_refine)
-            ),
-            green_hue_range=tuple(
-                data.get("green_hue_range", TransformConfig.green_hue_range)
-            ),  # type: ignore
-            min_object_area_ratio=float(
-                data.get("min_object_area_ratio", TransformConfig.min_object_area_ratio)
-            ),
-            max_object_area_ratio=float(
-                data.get("max_object_area_ratio", TransformConfig.max_object_area_ratio)
-            ),
-            mask_upscale_factor=float(
-                data.get("mask_upscale_factor", TransformConfig.mask_upscale_factor)
-            ),
-            mask_upscale_long_side=int(
-                data.get(
-                    "mask_upscale_long_side",
-                    TransformConfig.mask_upscale_long_side,
-                )
-            ),
-            shadow_suppression=bool(
-                data.get("shadow_suppression", TransformConfig.shadow_suppression)
-            ),
-            shadow_s_max=int(data.get("shadow_s_max", TransformConfig.shadow_s_max)),
-            shadow_v_method=str(
-                data.get("shadow_v_method", TransformConfig.shadow_v_method)
-            ),
-            shadow_v_percentile=int(
-                data.get("shadow_v_percentile", TransformConfig.shadow_v_percentile)
-            ),
-            brown_hue_range=tuple(
-                data.get("brown_hue_range", TransformConfig.brown_hue_range)
-            ),
-            brown_s_min=int(data.get("brown_s_min", TransformConfig.brown_s_min)),
-            brown_v_max=int(data.get("brown_v_max", TransformConfig.brown_v_max)),
-            brown_min_area_px=int(
-                data.get("brown_min_area_px", TransformConfig.brown_min_area_px)
-            ),
-            brown_morph_kernel=int(
-                data.get("brown_morph_kernel", TransformConfig.brown_morph_kernel)
-            ),
-            use_lab_brown=bool(
-                data.get("use_lab_brown", TransformConfig.use_lab_brown)
-            ),
-            lab_b_min=int(data.get("lab_b_min", TransformConfig.lab_b_min)),
-            lab_a_min=int(data.get("lab_a_min", TransformConfig.lab_a_min)),
+            gaussian_sigma=float(data["gaussian_sigma"]),
+            hsv_channel_for_mask=str(data["hsv_channel_for_mask"]),
+            fill_size=int(data["fill_size"]),
+            morph_kernel=int(data["morph_kernel"]),
+            landmarks_count=int(data["landmarks_count"]),
+            roi_size=tuple(data["roi_size"]),  # type: ignore
+            mask_strategy=str(data["mask_strategy"]),
+            bg_bias=data["bg_bias"],
+            grabcut_refine=bool(data["grabcut_refine"]),
+            green_hue_range=tuple(data["green_hue_range"]),  # type: ignore
+            min_object_area_ratio=float(data["min_object_area_ratio"]),
+            max_object_area_ratio=float(data["max_object_area_ratio"]),
+            mask_upscale_factor=float(data["mask_upscale_factor"]),
+            mask_upscale_long_side=int(data["mask_upscale_long_side"]),
+            shadow_suppression=bool(data["shadow_suppression"]),
+            shadow_s_max=int(data["shadow_s_max"]),
+            shadow_v_method=str(data["shadow_v_method"]),
+            shadow_v_percentile=int(data["shadow_v_percentile"]),
+            brown_hue_range=tuple(data["brown_hue_range"]),  # type: ignore
+            brown_s_min=int(data["brown_s_min"]),
+            brown_v_max=int(data["brown_v_max"]),
+            brown_min_area_px=int(data["brown_min_area_px"]),
+            brown_morph_kernel=int(data["brown_morph_kernel"]),
+            use_lab_brown=bool(data["use_lab_brown"]),
+            lab_b_min=int(data["lab_b_min"]),
+            lab_a_min=int(data["lab_a_min"]),
         )
     except Exception as exc:
-        logging.warning("Failed to read config (%s), using defaults", exc)
-        return TransformConfig()
+        logging.error("Failed to read configuration file (%s)", exc)
+        sys.exit(1)
 
 
 # === COMMON UTILITY FUNCTIONS ===
