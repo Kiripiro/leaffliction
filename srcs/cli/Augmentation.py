@@ -23,9 +23,9 @@ Available transformations:
   distortion - Add noise and adjust contrast
 
 Examples:
-  python srcs/cli/Augmentation.py flip image.jpg
-  python srcs/cli/Augmentation.py rotate --output custom_output.jpg image.jpg
-  python srcs/cli/Augmentation.py crop --seed 42 image.jpg
+  leaffliction-augment flip image.jpg
+  leaffliction-augment rotate --output custom_output.jpg image.jpg
+  leaffliction-augment crop --seed 42 image.jpg
         """,
     )
 
@@ -41,7 +41,8 @@ Examples:
     parser.add_argument(
         "-out",
         "--output",
-        help="Output path (default: prediction_output/augmented_<transform>_<name>)",
+        help="Output path "
+        "(default: artifacts/prediction_output/augmented_<transform>_<name>)",
     )
     parser.add_argument(
         "-seed",
@@ -63,7 +64,7 @@ def generate_output_path(input_path, transformation, custom_output=None):
         return Path(custom_output)
 
     input_path = Path(input_path)
-    output_dir = Path("prediction_output")
+    output_dir = Path("artifacts/prediction_output")
     output_name = f"augmented_{transformation}_{input_path.name}"
 
     return output_dir / output_name

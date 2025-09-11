@@ -28,14 +28,16 @@ def parse_args():
     parser.add_argument(
         "-out",
         "--output-dir",
-        default="prediction_output",
-        help="Directory to save prediction montages (default: prediction_output)",
+        default="artifacts/prediction_output",
+        help="Directory to save prediction montages"
+        " (default: artifacts/prediction_output)",
     )
     parser.add_argument(
         "-json",
         "--json-output",
-        default="prediction_output/batch_results.json",
-        help="JSON output path (default: prediction_output/batch_results.json)",
+        default="artifacts/prediction_output/batch_results.json",
+        help="JSON output path"
+        " (default: artifacts/prediction_output/batch_results.json)",
     )
     parser.add_argument(
         "-batch",
@@ -136,6 +138,9 @@ def save_batch_results_json(results, processing_time, output_path):
     """Save batch results to JSON file."""
     output_path = Path(output_path)
 
+    if not output_path.is_absolute() and not str(output_path).startswith("artifacts/"):
+        output_path = Path("artifacts/prediction_output") / output_path.name
+
     json_results = []
     for result in results:
         json_result = {
@@ -200,7 +205,7 @@ def main():
                 )
                 logger.info(f"Results saved to: {output_file}")
 
-            dashboard_dir = Path("prediction_output")
+            dashboard_dir = Path("artifacts/prediction_output")
             dashboard_file = DisplayUtils.create_batch_dashboard(
                 results, dashboard_dir / "batch_dashboard.png"
             )
