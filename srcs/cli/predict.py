@@ -7,6 +7,7 @@ from pathlib import Path
 from srcs.predict.prediction_visualizer import PredictionVisualizer
 from srcs.predict.predictor import Predictor
 from srcs.utils.common import get_logger
+from srcs.utils.image_utils import DisplayUtils, ImageLoader
 
 logger = get_logger(__name__)
 
@@ -68,16 +69,16 @@ def validate_inputs(args):
 
 
 def print_prediction_result(result):
-    print(f"Image: {result['image_path']}")
-    print(f"Prediction: {result['top_prediction']} ({result['confidence']:.2%})")
+    logger.info(f"Image: {result['image_path']}")
+    logger.info(f"Prediction: {result['top_prediction']} ({result['confidence']:.2%})")
 
     sorted_probs = sorted(
         result["all_probabilities"].items(), key=lambda x: x[1], reverse=True
     )
-    print("Top 3 predictions:")
+    logger.info("Top 3 predictions:")
     for i, (class_name, prob) in enumerate(sorted_probs[:3]):
         marker = "→" if i == 0 else " "
-        print(f"  {marker} {class_name}: {prob:.2%}")
+        logger.info(f"  {marker} {class_name}: {prob:.2%}")
 
 
 def create_output_montage(result, output_dir):
@@ -90,16 +91,7 @@ def create_output_montage(result, output_dir):
 
 
 def get_image_files(directory_path):
-    """Get all image files from directory with common extensions."""
-    image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
-    directory = Path(directory_path)
-
-    image_files = []
-    for ext in image_extensions:
-        image_files.extend(directory.glob(f"*{ext}"))
-        image_files.extend(directory.glob(f"*{ext.upper()}"))
-
-    return sorted(image_files)
+    return ImageLoader.get_image_files(directory_path)
 
 
 def process_batch_predictions(predictor, image_directory):
@@ -164,21 +156,21 @@ def save_batch_results_json(results, processing_time, output_path):
     return output_path
 
 
-def print_batch_summary(results, processing_time):
-    """Print summary of batch predictions to console."""
+def log_batch_summary(results, processing_time):
+    """Log summary of batch predictions."""
     if not results:
-        print("No predictions made.")
+        logger.warning("No predictions made.")
         return
 
     summary = create_batch_summary(results, processing_time)
 
-    print("\nBatch Processing Summary:")
-    print(f"  Total images processed: {summary['total_images']}")
-    print(f"  Processing time: {summary['processing_time']}")
-    print(f"  Average confidence: {summary['average_confidence']}")
-    print("\nPrediction distribution:")
+    logger.info("Batch Processing Summary:")
+    logger.info(f"  Total images processed: {summary['total_images']}")
+    logger.info(f"  Processing time: {summary['processing_time']}")
+    logger.info(f"  Average confidence: {summary['average_confidence']}")
+    logger.info("Prediction distribution:")
     for pred, count in summary["prediction_distribution"].items():
-        print(f"  {pred}: {count} images")
+        logger.info(f"  {pred}: {count} images")
 
 
 def main():
@@ -196,16 +188,25 @@ def main():
             results, processing_time = process_batch_predictions(predictor, image_path)
 
             if not results:
-                print("No images found or processed successfully.")
+                logger.error("No images found or processed successfully.")
                 sys.exit(1)
 
-            print_batch_summary(results, processing_time)
+            log_batch_summary(results, processing_time)
 
             if args.json_output:
                 output_file = save_batch_results_json(
                     results, processing_time, args.json_output
                 )
-                print(f"\nResults saved to: {output_file}")
+                logger.info(f"Results saved to: {output_file}")
+
+            # Create and display confusion matrix
+            cm_path = Path("prediction_output") / "confusion_matrix.png"
+            confusion_matrix_file = DisplayUtils.create_confusion_matrix(
+                results, cm_path
+            )
+            if confusion_matrix_file:
+                logger.info(f"Confusion matrix saved to: {confusion_matrix_file}")
+                DisplayUtils.open_image_viewer(confusion_matrix_file)
 
             logger.info("Batch prediction completed successfully")
 
@@ -217,17 +218,16 @@ def main():
 
             if args.output_dir:
                 output_file = create_output_montage(result, args.output_dir)
-                print(f"\nMontage saved: {output_file}")
+                logger.info(f"Montage saved: {output_file}")
+                DisplayUtils.open_image_viewer(output_file)
 
             logger.info("Prediction completed successfully")
 
     except (FileNotFoundError, ValueError) as e:
         logger.error(f"Input error: {e}")
-        print(f"Error: {e}")
         sys.exit(1)
     except Exception as e:
         logger.error(f"Prediction failed: {e}")
-        print(f"Unexpected error: {e}")
         sys.exit(1)
 
 

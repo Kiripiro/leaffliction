@@ -91,14 +91,14 @@ class Predictor:
 
         results = []
         for i, (img_path, original, processed) in enumerate(original_arrays):
-            probabilites = batch_probabilities[i]
+            probabilities = batch_probabilities[i]
 
-            top_idx = int(np.argmax(probabilites))
+            top_idx = int(np.argmax(probabilities))
             top_class = self.model_loader.labels[top_idx]
-            confidence = float(probabilites[top_idx])
+            confidence = float(probabilities[top_idx])
 
             all_probabilities = {
-                self.model_loader.labels[j]: float(probabilites[j])
+                self.model_loader.labels[j]: float(probabilities[j])
                 for j in range(len(self.model_loader.labels))
             }
 

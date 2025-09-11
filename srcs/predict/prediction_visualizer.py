@@ -3,10 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict
 
-import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from srcs.utils.common import get_logger
+from srcs.utils.image_utils import ImageLoader
 
 logger = get_logger(__name__)
 
@@ -22,10 +22,8 @@ class PredictionVisualizer:
         original = result["original_array"]
         processed = result["processed_array"]
 
-        processed_display = (processed * 255).astype(np.uint8)
-
-        original_image = Image.fromarray(original)
-        processed_image = Image.fromarray(processed_display)
+        original_image = ImageLoader.array_to_pil(original)
+        processed_image = ImageLoader.array_to_pil(processed)
 
         display_size = (224, 224)
         original_image = original_image.resize(display_size, Image.Resampling.LANCZOS)
@@ -66,7 +64,6 @@ class PredictionVisualizer:
             fill="gray",
         )
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        montage.save(output_path)
+        ImageLoader.save_pil_image(montage, output_path)
 
         logger.info(f"Montage saved to {output_path}")
