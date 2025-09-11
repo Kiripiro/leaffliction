@@ -1,5 +1,7 @@
 import argparse
+import json
 import sys
+import time
 from pathlib import Path
 
 from srcs.predict.prediction_visualizer import PredictionVisualizer
@@ -11,10 +13,10 @@ logger = get_logger(__name__)
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Predict leaf disease from image",
+        description="Predict leaf disease from image(s)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("image_path", help="Path to image to predict")
+    parser.add_argument("image_path", help="Path to image or directory to predict")
     parser.add_argument(
         "-learnings",
         "--learnings-dir",
@@ -22,7 +24,18 @@ def parse_args():
         help="Directory containing model and metadata (default: artifacts/models)",
     )
     parser.add_argument(
-        "-out", "--output-dir", help="Directory to save prediction montages"
+        "-out",
+        "--output-dir",
+        help="Directory to save prediction montages (single image mode)",
+    )
+    parser.add_argument(
+        "-json", "--json-output", help="Path to save JSON results (batch mode)"
+    )
+    parser.add_argument(
+        "-batch",
+        "--batch-mode",
+        action="store_true",
+        help="Process directory of images and output JSON results",
     )
     return parser.parse_args()
 
@@ -32,7 +45,13 @@ def validate_inputs(args):
     learnings_dir = Path(args.learnings_dir)
 
     if not image_path.exists():
-        raise FileNotFoundError(f"Image not found: {image_path}")
+        raise FileNotFoundError(f"Path not found: {image_path}")
+
+    if args.batch_mode and not image_path.is_dir():
+        raise ValueError(f"Batch mode requires a directory, got: {image_path}")
+
+    if not args.batch_mode and not image_path.is_file():
+        raise ValueError(f"Single mode requires an image file, got: {image_path}")
 
     if not learnings_dir.exists():
         raise FileNotFoundError(f"Learnings directory not found: {learnings_dir}")
@@ -66,29 +85,140 @@ def create_output_montage(result, output_dir):
     return output_file
 
 
+def get_image_files(directory_path):
+    """Get all image files from directory with common extensions."""
+    image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
+    directory = Path(directory_path)
+
+    image_files = []
+    for ext in image_extensions:
+        image_files.extend(directory.glob(f"*{ext}"))
+        image_files.extend(directory.glob(f"*{ext.upper()}"))
+
+    return sorted(image_files)
+
+
+def process_batch_predictions(predictor, image_directory):
+    """Process all images in directory and return batch results."""
+    image_files = get_image_files(image_directory)
+
+    if not image_files:
+        logger.warning(f"No image files found in {image_directory}")
+        return []
+
+    logger.info(f"Found {len(image_files)} images to process")
+
+    start_time = time.time()
+    results = predictor.predict_batch(image_files)
+    processing_time = time.time() - start_time
+
+    return results, processing_time
+
+
+def create_batch_summary(results, processing_time):
+    """Create summary statistics for batch predictions."""
+    if not results:
+        return {"total_images": 0, "processing_time": f"{processing_time:.2f}s"}
+
+    predictions = [r["top_prediction"] for r in results]
+    prediction_counts = {}
+    for pred in predictions:
+        prediction_counts[pred] = prediction_counts.get(pred, 0) + 1
+
+    avg_confidence = sum(r["confidence"] for r in results) / len(results)
+
+    return {
+        "total_images": len(results),
+        "processing_time": f"{processing_time:.2f}s",
+        "average_confidence": f"{avg_confidence:.2%}",
+        "prediction_distribution": prediction_counts,
+    }
+
+
+def save_batch_results_json(results, processing_time, output_path):
+    """Save batch results to JSON file."""
+    output_path = Path(output_path)
+
+    json_results = []
+    for result in results:
+        json_result = {
+            "image_path": str(result["image_path"]),
+            "top_prediction": result["top_prediction"],
+            "confidence": result["confidence"],
+            "all_probabilities": result["all_probabilities"],
+        }
+        json_results.append(json_result)
+
+    summary = create_batch_summary(results, processing_time)
+
+    output_data = {"batch_results": json_results, "summary": summary}
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w") as f:
+        json.dump(output_data, f, indent=2)
+
+    return output_path
+
+
+def print_batch_summary(results, processing_time):
+    """Print summary of batch predictions to console."""
+    if not results:
+        print("No predictions made.")
+        return
+
+    summary = create_batch_summary(results, processing_time)
+
+    print("\nBatch Processing Summary:")
+    print(f"  Total images processed: {summary['total_images']}")
+    print(f"  Processing time: {summary['processing_time']}")
+    print(f"  Average confidence: {summary['average_confidence']}")
+    print("\nPrediction distribution:")
+    for pred, count in summary["prediction_distribution"].items():
+        print(f"  {pred}: {count} images")
+
+
 def main():
     try:
         args = parse_args()
 
         image_path, learnings_dir = validate_inputs(args)
-        logger.info(f"Processing image: {image_path}")
 
         predictor = Predictor(learnings_dir)
         predictor.load()
         logger.info(f"Model loaded: {predictor.model_loader.num_classes} classes")
 
-        result = predictor.predict_single(image_path)
+        if args.batch_mode:
+            logger.info(f"Processing directory: {image_path}")
+            results, processing_time = process_batch_predictions(predictor, image_path)
 
-        print_prediction_result(result)
+            if not results:
+                print("No images found or processed successfully.")
+                sys.exit(1)
 
-        if args.output_dir:
-            output_file = create_output_montage(result, args.output_dir)
-            print(f"\nMontage saved: {output_file}")
+            print_batch_summary(results, processing_time)
 
-        logger.info("Prediction completed successfully")
+            if args.json_output:
+                output_file = save_batch_results_json(
+                    results, processing_time, args.json_output
+                )
+                print(f"\nResults saved to: {output_file}")
 
-    except FileNotFoundError as e:
-        logger.error(f"File not found: {e}")
+            logger.info("Batch prediction completed successfully")
+
+        else:
+            logger.info(f"Processing image: {image_path}")
+            result = predictor.predict_single(image_path)
+
+            print_prediction_result(result)
+
+            if args.output_dir:
+                output_file = create_output_montage(result, args.output_dir)
+                print(f"\nMontage saved: {output_file}")
+
+            logger.info("Prediction completed successfully")
+
+    except (FileNotFoundError, ValueError) as e:
+        logger.error(f"Input error: {e}")
         print(f"Error: {e}")
         sys.exit(1)
     except Exception as e:
