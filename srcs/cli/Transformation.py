@@ -636,7 +636,7 @@ def transform_single_image_for_training(  # noqa: C901
     cfg: Optional[TransformConfig] = None,
     transform_types: Optional[Tuple[str, ...]] = None,
     apply_augmentation: bool = True,
-    extern_cache: Optional[Dict[Any, Tuple[np.ndarray, np.ndarray]]] = None,
+    extern_cache: Optional[Dict[Any, Any]] = None,
     logger: Optional[logging.Logger] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -656,8 +656,6 @@ def transform_single_image_for_training(  # noqa: C901
     Returns:
         Tuple of (original_uint8, transformed_float32) both resized to img_size
     """
-    import cv2
-
     log = logger or logging.getLogger(__name__)
 
     if cfg is None:
@@ -681,9 +679,9 @@ def transform_single_image_for_training(  # noqa: C901
             orig_uint8 = np.clip(resized, 0, 255).astype("uint8")
             return orig_uint8, x_float32
 
-    # If not provided, default transformations for training
+    # If not provided, default to all transforms in optimal order
     if transform_types is None:
-        transform_types = ("Blur", "Mask")
+        transform_types = DEFAULT_TYPES
 
     # Canonicalize + de-duplicate transforms while preserving order
     canonical: List[str] = []
@@ -714,27 +712,28 @@ def transform_single_image_for_training(  # noqa: C901
         # Load and cache original RGB to avoid re-reading the same image
         rgb_cache_key = ("__rgb__", str(img_path))
         if extern_cache is not None and rgb_cache_key in extern_cache:
-            rgb = extern_cache[rgb_cache_key]  # type: ignore[assignment]
+            rgb = extern_cache[rgb_cache_key]
         else:
             rgb = pil_read_rgb(img_path)
             if extern_cache is not None:
-                extern_cache[rgb_cache_key] = rgb  # type: ignore[index]
+                extern_cache[rgb_cache_key] = rgb
 
         # Keep the original resized (independent of transform list)
         orig_resize_key = ("__orig__", str(img_path), int(img_size))
         if extern_cache is not None and orig_resize_key in extern_cache:
-            orig_uint8 = extern_cache[orig_resize_key]  # type: ignore[assignment]
+            orig_uint8 = extern_cache[orig_resize_key]
         else:
             orig_resized = cv2.resize(
                 rgb, (img_size, img_size), interpolation=cv2.INTER_LANCZOS4
             )
             orig_uint8 = np.clip(orig_resized, 0, 255).astype("uint8")
             if extern_cache is not None:
-                extern_cache[orig_resize_key] = orig_uint8  # type: ignore[index]
+                extern_cache[orig_resize_key] = orig_uint8
 
         # Apply transformations in sequence
         pipe = TransformPipeline(cfg)
         transformed_img = rgb.copy()
+        original_rgb = rgb  # preserve original for detectors like Brown
 
         # Reuse intermediate computations in a per-call dict to avoid redundant work
         step_cache: Dict[str, Any] = {}
@@ -750,55 +749,121 @@ def transform_single_image_for_training(  # noqa: C901
                 and mask_key in extern_cache
                 and contour_key in extern_cache
             ):
-                mask_img = extern_cache[mask_key]  # type: ignore[assignment]
-                contour = extern_cache[contour_key]  # type: ignore[assignment]
+                mask_img = extern_cache[mask_key]
+                contour = extern_cache[contour_key]
             else:
                 mask_img, contour = pipe.make_mask(rgb)
                 if extern_cache is not None:
-                    extern_cache[mask_key] = mask_img  # type: ignore[index]
-                    extern_cache[contour_key] = contour  # type: ignore[index]
+                    extern_cache[mask_key] = mask_img
+                    extern_cache[contour_key] = contour
             step_cache["Mask:binary"] = mask_img
             step_cache["Mask:contour"] = contour
 
         if "Blur" in transform_types:
-            transformed_img = pipe.blur(transformed_img)
-            step_cache["Blur"] = transformed_img
+            blur_img = pipe.blur(original_rgb)
+            transformed_img = blur_img
+            step_cache["Blur"] = blur_img
 
         if "Mask" in transform_types and mask_img is not None:
             from srcs.cli.filters.mask import apply_mask_filter
 
-            transformed_img = apply_mask_filter(transformed_img, cfg, pipe.make_mask)
-            step_cache["Mask:applied"] = transformed_img
-
-        if "Brown" in transform_types and mask_img is not None:
-            brown_img, _, _ = pipe.detect_brown_spots(transformed_img, mask_img)
-            if brown_img is not None:
-                transformed_img = brown_img
-                step_cache["Brown"] = transformed_img
+            masked_rgb = apply_mask_filter(original_rgb, cfg, pipe.make_mask)
+            transformed_img = masked_rgb
+            step_cache["Mask:applied"] = masked_rgb
 
         if "ROI" in transform_types and contour is not None:
-            roi_img, roi_vis, _ = pipe.roi(transformed_img, contour)
+            _roi_img, roi_vis, _ = pipe.roi(original_rgb, contour)
             if roi_vis is not None:
                 transformed_img = roi_vis
                 step_cache["ROI"] = transformed_img
 
         if "Analyze" in transform_types:
-            analyze_img = pipe.analyze(transformed_img, mask_img, contour)
+            analyze_img = pipe.analyze(original_rgb, mask_img, contour)
             if analyze_img is not None:
                 transformed_img = analyze_img
                 step_cache["Analyze"] = transformed_img
 
         if "Landmarks" in transform_types and contour is not None:
-            lm_img = pipe.pseudolandmarks(transformed_img, contour)
+            lm_img = pipe.pseudolandmarks(original_rgb, contour)
             if lm_img is not None:
                 transformed_img = lm_img
                 step_cache["Landmarks"] = transformed_img
 
         if "Hist" in transform_types:
-            hist_img = pipe.histogram_hsv(transformed_img)
+            hist_img = pipe.histogram_hsv(original_rgb)
             if hist_img is not None:
                 transformed_img = hist_img
                 step_cache["Hist"] = transformed_img
+
+        # Apply Brown last to mirror the CLI processing order
+        if "Brown" in transform_types and mask_img is not None:
+            # Use original RGB for brown detection (parity with CLI)
+            brown_img, _, _ = pipe.detect_brown_spots(original_rgb, mask_img)
+            if brown_img is not None:
+                transformed_img = brown_img
+                step_cache["Brown"] = transformed_img
+
+        # Optionally save all transformation steps for a random subset of images
+        # Controlled via environment variables to avoid changing call sites
+        #   LEAF_SAVE_TRANSFORMS: "1"/"true" to enable (default off)
+        #   LEAF_SAVE_TRANSFORMS_RATE: sampling probability in [0,1] (default 0.05)
+        #   LEAF_SAVE_TRANSFORMS_DIR: output directory
+        #       (default artifacts/sequence_previews)
+        try:
+            import random
+
+            save_flag = os.environ.get("LEAF_SAVE_TRANSFORMS", "0").lower() in {
+                "1",
+                "true",
+                "yes",
+            }
+            save_rate = float(os.environ.get("LEAF_SAVE_TRANSFORMS_RATE", "0.05"))
+            if save_flag and random.random() < max(0.0, min(1.0, save_rate)):
+                repo_root = Path(__file__).resolve().parents[2]
+                base_dir = os.environ.get(
+                    "LEAF_SAVE_TRANSFORMS_DIR",
+                    str(repo_root / "artifacts" / "sequence_previews"),
+                )
+                # Try to preserve a bit of folder structure for readability
+                stem = img_path.stem
+                parent = img_path.parent.name
+                out_dir = Path(base_dir) / parent / stem
+                ensure_dir(out_dir)
+
+                # Save original and each step (if present)
+                # Helper to save safely
+                def _save(name: str, arr: Any) -> None:
+                    if arr is None:
+                        return
+                    if isinstance(arr, np.ndarray):
+                        imwrite_bgr(out_dir / f"T_{name}.jpg", arr)
+                    else:
+                        try:
+                            imwrite_bgr(out_dir / f"T_{name}.jpg", np.asarray(arr))
+                        except Exception:
+                            pass
+
+                _save("00_Input", original_rgb)
+                if "Blur" in step_cache:
+                    _save("10_Blur", step_cache.get("Blur"))
+                if step_cache.get("Mask:binary") is not None:
+                    _save("20_MaskBinary", step_cache.get("Mask:binary"))
+                if step_cache.get("Mask:applied") is not None:
+                    _save("21_MaskApplied", step_cache.get("Mask:applied"))
+                if step_cache.get("ROI") is not None:
+                    _save("30_ROI", step_cache.get("ROI"))
+                if step_cache.get("Analyze") is not None:
+                    _save("40_Analyze", step_cache.get("Analyze"))
+                if step_cache.get("Landmarks") is not None:
+                    _save("50_Landmarks", step_cache.get("Landmarks"))
+                if step_cache.get("Hist") is not None:
+                    _save("60_Hist", step_cache.get("Hist"))
+                if step_cache.get("Brown") is not None:
+                    _save("70_Brown", step_cache.get("Brown"))
+                # Final image fed to the model (after resize happens below)
+                _save("99_FinalPreResize", transformed_img)
+        except Exception as dbg_exc:
+            log.debug("Transform preview save skipped: %s", dbg_exc)
 
         # Resize and normalize for the model
         transformed_resized = cv2.resize(
@@ -892,14 +957,14 @@ def create_transform_function(
         cfg = load_config(Path(config_path))
 
     # Internal cache shared across calls (keyed by (src, img_size, transforms))
-    _internal_cache: Dict[Any, Tuple[np.ndarray, np.ndarray]] = {}
+    _internal_cache: Dict[Any, Any] = {}
 
     def transform_fn(
         img_path: Path,
-        item,
+        item: Any,
         img_size: int,
         transformations: Optional[Tuple[str, ...]] = None,
-        cache: Optional[Dict[Any, Tuple[np.ndarray, np.ndarray]]] = None,
+        cache: Optional[Dict[Any, Any]] = None,
         logger: Optional[logging.Logger] = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         # Prefer caller-provided list, else the default configured at creation
@@ -918,3 +983,7 @@ def create_transform_function(
         )
 
     return transform_fn
+
+
+if __name__ == "__main__":
+    main()

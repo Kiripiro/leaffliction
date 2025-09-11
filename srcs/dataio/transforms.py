@@ -48,9 +48,7 @@ def create_training_transform(
         )
         ```
     """
-    if transform_types is None:
-        # Configuration par défaut optimisée pour l'entraînement
-        transform_types = ("Blur", "Mask")
+    # Laisser None pour que la pipeline choisisse l'ordre optimal (DEFAULT_TYPES)
 
     return create_transform_function(
         config_path=config_path,
@@ -73,9 +71,7 @@ def create_inference_transform(
     Returns:
         Fonction de transformation pour l'inférence
     """
-    if transform_types is None:
-        # Configuration plus complète pour l'inférence
-        transform_types = ("Blur", "Mask", "Brown")
+    # Laisser None pour que la pipeline choisisse l'ordre optimal (DEFAULT_TYPES)
 
     return create_transform_function(
         config_path=config_path,

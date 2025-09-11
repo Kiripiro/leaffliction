@@ -90,9 +90,7 @@ class ManifestSequence(Sequence):
         one_hot: bool = False,
         cache: bool = False,
         workers: int = 1,
-        transform: Optional[
-            Callable[[Path, ManifestItem, int], Tuple[np.ndarray, np.ndarray]]
-        ] = None,
+        transform: Optional[Callable[..., Tuple[np.ndarray, np.ndarray]]] = None,
         # New options
         transformation: bool = True,
         transform_types: Optional[Tuple[str, ...]] = None,
@@ -223,11 +221,21 @@ class ManifestSequence(Sequence):
                     it.src,
                 )
             transform_start = time.time()
-            orig_uint8, x_float32 = self.transform(
-                Path(it.src),
-                it,
-                self.img_size,
-            )
+            try:
+                orig_uint8, x_float32 = self.transform(
+                    Path(it.src),
+                    it,
+                    self.img_size,
+                    transformations=transforms_for_call or self.transform_types,
+                    cache=self._extern_cache,
+                    logger=self.logger,
+                )
+                # Mark transforms as applied to avoid duplicates next time
+                if self.enforce_unique_filters and transforms_for_call:
+                    self._mark_applied(Path(it.src), transforms_for_call)
+            except TypeError:
+                # Fallback for simple transforms without extended signature
+                orig_uint8, x_float32 = self.transform(Path(it.src), it, self.img_size)
             transform_time = time.time() - transform_start
             self.logger.debug(
                 "[%s] Transform completed in %.3fs", it.id, transform_time
