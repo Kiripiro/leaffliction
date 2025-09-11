@@ -26,10 +26,14 @@ def parse_args():
     parser.add_argument(
         "-out",
         "--output-dir",
-        help="Directory to save prediction montages (single image mode)",
+        default="prediction_output",
+        help="Directory to save prediction montages (default: prediction_output)",
     )
     parser.add_argument(
-        "-json", "--json-output", help="Path to save JSON results (batch mode)"
+        "-json",
+        "--json-output",
+        default="prediction_output/batch_results.json",
+        help="JSON output path (default: prediction_output/batch_results.json)",
     )
     parser.add_argument(
         "-batch",

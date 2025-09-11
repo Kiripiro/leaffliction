@@ -218,4 +218,4 @@ augmented_directory/
 artifacts/
 datasets/
 
-srcs/cli/generate_test_manifest.py
+prediction_output/
