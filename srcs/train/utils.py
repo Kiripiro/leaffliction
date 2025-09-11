@@ -104,8 +104,9 @@ def save_best_variant(
             {k: [float(x) for x in v] for k, v in history.history.items()}, f, indent=2
         )
 
+    labels_sorted = sorted(label2idx, key=lambda k: label2idx[k])
+
     try:
-        labels_sorted = sorted(label2idx, key=lambda k: label2idx[k])
         meta_out: Dict[str, Any] = {
             "created_at": datetime.now(tz=timezone.utc).isoformat(),
             "model_file": str(model_path),
@@ -126,5 +127,4 @@ def save_best_variant(
     except Exception as e:
         LOGGER.warning("Failed to write meta.json: %s", e)
 
-    labels_sorted = sorted(label2idx, key=lambda k: label2idx[k])
     confusion_matrix(model, val_data, labels_sorted, out_dir)
