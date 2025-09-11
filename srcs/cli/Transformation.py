@@ -8,7 +8,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 # Try to import logging helper early (imports must stay at top for E402)
 try:
@@ -626,5 +626,295 @@ def main() -> None:  # noqa: C901
     logging.error("Must specify either single image or --src/--dst for folder mode")
 
 
-if __name__ == "__main__":
-    main()
+# === TRAINING-SPECIFIC FUNCTIONS ===
+
+
+def transform_single_image_for_training(  # noqa: C901
+    img_path: Path,
+    item: Any,  # ManifestItem
+    img_size: int,
+    cfg: Optional[TransformConfig] = None,
+    transform_types: Optional[Tuple[str, ...]] = None,
+    apply_augmentation: bool = True,
+    extern_cache: Optional[Dict[Any, Tuple[np.ndarray, np.ndarray]]] = None,
+    logger: Optional[logging.Logger] = None,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Transform a single image for model training/inference.
+
+    Args:
+        img_path: Path to the image file
+        item: ManifestItem with metadata (unused for interface compatibility)
+        img_size: Target size for model input (e.g., 224, 256, etc.)
+        cfg: Configuration for transformations (if None, loads default)
+        transform_types: Which transformations to apply
+            (default: optimized for training)
+        apply_augmentation: Whether to apply data augmentation
+        extern_cache: External cache dict to reuse results across calls
+        logger: Optional logger for messages
+
+    Returns:
+        Tuple of (original_uint8, transformed_float32) both resized to img_size
+    """
+    import cv2
+
+    log = logger or logging.getLogger(__name__)
+
+    if cfg is None:
+        # Load default config if not provided
+        try:
+            repo_root = Path(__file__).resolve().parents[2]
+            default_config_path = repo_root / "transform" / "config.yaml"
+            cfg = load_config(default_config_path)
+        except Exception as exc:
+            log.warning(
+                "Failed to load default config, using minimal transformations: %s",
+                exc,
+            )
+            # Fallback: simple resize without transformation
+            from keras.utils import img_to_array, load_img
+
+            resized = img_to_array(
+                load_img(img_path, target_size=(img_size, img_size), color_mode="rgb")
+            )
+            x_float32 = (resized / 255.0).astype("float32")
+            orig_uint8 = np.clip(resized, 0, 255).astype("uint8")
+            return orig_uint8, x_float32
+
+    # If not provided, default transformations for training
+    if transform_types is None:
+        transform_types = ("Blur", "Mask")
+
+    # Canonicalize + de-duplicate transforms while preserving order
+    canonical: List[str] = []
+    seen: set[str] = set()
+    for t in transform_types:
+        key = str(t).strip().lower()
+        if key in CANONICAL_TYPES:
+            name = CANONICAL_TYPES[key]
+        else:
+            name = t
+        if name not in seen:
+            canonical.append(name)
+            seen.add(name)
+        else:
+            # Prevent duplicate filter application on the same image
+            log.info("Duplicate transform '%s' ignored for %s", name, img_path)
+    transform_types = tuple(canonical)
+
+    # Global cache key for final output
+    cache_key = (str(img_path), int(img_size), tuple(transform_types))
+
+    # Fast path: return from external cache
+    if extern_cache is not None and cache_key in extern_cache:
+        cached = extern_cache[cache_key]
+        return cached[0], cached[1]
+
+    try:
+        # Load and cache original RGB to avoid re-reading the same image
+        rgb_cache_key = ("__rgb__", str(img_path))
+        if extern_cache is not None and rgb_cache_key in extern_cache:
+            rgb = extern_cache[rgb_cache_key]  # type: ignore[assignment]
+        else:
+            rgb = pil_read_rgb(img_path)
+            if extern_cache is not None:
+                extern_cache[rgb_cache_key] = rgb  # type: ignore[index]
+
+        # Keep the original resized (independent of transform list)
+        orig_resize_key = ("__orig__", str(img_path), int(img_size))
+        if extern_cache is not None and orig_resize_key in extern_cache:
+            orig_uint8 = extern_cache[orig_resize_key]  # type: ignore[assignment]
+        else:
+            orig_resized = cv2.resize(
+                rgb, (img_size, img_size), interpolation=cv2.INTER_LANCZOS4
+            )
+            orig_uint8 = np.clip(orig_resized, 0, 255).astype("uint8")
+            if extern_cache is not None:
+                extern_cache[orig_resize_key] = orig_uint8  # type: ignore[index]
+
+        # Apply transformations in sequence
+        pipe = TransformPipeline(cfg)
+        transformed_img = rgb.copy()
+
+        # Reuse intermediate computations in a per-call dict to avoid redundant work
+        step_cache: Dict[str, Any] = {}
+
+        mask_img, contour = None, None
+        mask_needed = ["Mask", "Brown", "ROI", "Analyze", "Landmarks"]
+        if any(t in transform_types for t in mask_needed):
+            # Try cache first (compute mask on original rgb)
+            mask_key = ("__mask__", str(img_path))
+            contour_key = ("__contour__", str(img_path))
+            if (
+                extern_cache is not None
+                and mask_key in extern_cache
+                and contour_key in extern_cache
+            ):
+                mask_img = extern_cache[mask_key]  # type: ignore[assignment]
+                contour = extern_cache[contour_key]  # type: ignore[assignment]
+            else:
+                mask_img, contour = pipe.make_mask(rgb)
+                if extern_cache is not None:
+                    extern_cache[mask_key] = mask_img  # type: ignore[index]
+                    extern_cache[contour_key] = contour  # type: ignore[index]
+            step_cache["Mask:binary"] = mask_img
+            step_cache["Mask:contour"] = contour
+
+        if "Blur" in transform_types:
+            transformed_img = pipe.blur(transformed_img)
+            step_cache["Blur"] = transformed_img
+
+        if "Mask" in transform_types and mask_img is not None:
+            from srcs.cli.filters.mask import apply_mask_filter
+
+            transformed_img = apply_mask_filter(transformed_img, cfg, pipe.make_mask)
+            step_cache["Mask:applied"] = transformed_img
+
+        if "Brown" in transform_types and mask_img is not None:
+            brown_img, _, _ = pipe.detect_brown_spots(transformed_img, mask_img)
+            if brown_img is not None:
+                transformed_img = brown_img
+                step_cache["Brown"] = transformed_img
+
+        if "ROI" in transform_types and contour is not None:
+            roi_img, roi_vis, _ = pipe.roi(transformed_img, contour)
+            if roi_vis is not None:
+                transformed_img = roi_vis
+                step_cache["ROI"] = transformed_img
+
+        if "Analyze" in transform_types:
+            analyze_img = pipe.analyze(transformed_img, mask_img, contour)
+            if analyze_img is not None:
+                transformed_img = analyze_img
+                step_cache["Analyze"] = transformed_img
+
+        if "Landmarks" in transform_types and contour is not None:
+            lm_img = pipe.pseudolandmarks(transformed_img, contour)
+            if lm_img is not None:
+                transformed_img = lm_img
+                step_cache["Landmarks"] = transformed_img
+
+        if "Hist" in transform_types:
+            hist_img = pipe.histogram_hsv(transformed_img)
+            if hist_img is not None:
+                transformed_img = hist_img
+                step_cache["Hist"] = transformed_img
+
+        # Resize and normalize for the model
+        transformed_resized = cv2.resize(
+            transformed_img, (img_size, img_size), interpolation=cv2.INTER_LANCZOS4
+        )
+
+        if apply_augmentation:
+            transformed_resized = _apply_light_augmentation(transformed_resized)
+
+        x_float32 = (transformed_resized / 255.0).astype("float32")
+
+        # Save in external cache if provided
+        if extern_cache is not None:
+            extern_cache[cache_key] = (orig_uint8, x_float32)
+
+        return orig_uint8, x_float32
+
+    except Exception as exc:
+        log.error(
+            "Failed to transform %s (%s), falling back to simple resize",
+            img_path,
+            exc,
+        )
+        # Fallback en cas d'erreur
+        from keras.utils import img_to_array, load_img
+
+        try:
+            resized = img_to_array(
+                load_img(img_path, target_size=(img_size, img_size), color_mode="rgb")
+            )
+            x_float32 = (resized / 255.0).astype("float32")
+            orig_uint8 = np.clip(resized, 0, 255).astype("uint8")
+            if extern_cache is not None:
+                extern_cache[cache_key] = (orig_uint8, x_float32)
+            return orig_uint8, x_float32
+        except Exception as fallback_exc:
+            log.error("Complete failure to load %s (%s)", img_path, fallback_exc)
+            # Retourner des images noires en dernier recours
+            black_img = np.zeros((img_size, img_size, 3), dtype="uint8")
+            black_float = np.zeros((img_size, img_size, 3), dtype="float32")
+            if extern_cache is not None:
+                extern_cache[cache_key] = (black_img, black_float)
+            return black_img, black_float
+
+
+def _apply_light_augmentation(img: np.ndarray) -> np.ndarray:
+    """
+    Appliquer une augmentation légère pour l'entraînement.
+
+    Args:
+        img: Image RGB en uint8
+
+    Returns:
+        Image augmentée
+    """
+    import random
+
+    # Probabilité d'appliquer chaque transformation
+    if random.random() < 0.3:  # 30% de chance
+        # Ajustement léger de la luminosité
+        brightness_factor = random.uniform(0.8, 1.2)
+        img = np.clip(img * brightness_factor, 0, 255).astype("uint8")
+
+    if random.random() < 0.2:  # 20% de chance
+        # Ajustement léger du contraste
+        contrast_factor = random.uniform(0.8, 1.2)
+        img = np.clip((img - 127.5) * contrast_factor + 127.5, 0, 255).astype("uint8")
+
+    return img
+
+
+def create_transform_function(
+    config_path: Optional[str] = None,
+    transform_types: Optional[Tuple[str, ...]] = None,
+    apply_augmentation: bool = True,
+):
+    """
+    Créer une fonction de transformation compatible avec ManifestSequence.
+
+    Args:
+        config_path: Chemin vers le fichier de configuration YAML
+        transform_types: Types de transformations à appliquer
+        apply_augmentation: Activer l'augmentation de données
+
+    Returns:
+        Fonction de transformation utilisable avec ManifestSequence
+    """
+    # Charger la configuration une seule fois
+    cfg = None
+    if config_path:
+        cfg = load_config(Path(config_path))
+
+    # Internal cache shared across calls (keyed by (src, img_size, transforms))
+    _internal_cache: Dict[Any, Tuple[np.ndarray, np.ndarray]] = {}
+
+    def transform_fn(
+        img_path: Path,
+        item,
+        img_size: int,
+        transformations: Optional[Tuple[str, ...]] = None,
+        cache: Optional[Dict[Any, Tuple[np.ndarray, np.ndarray]]] = None,
+        logger: Optional[logging.Logger] = None,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        # Prefer caller-provided list, else the default configured at creation
+        chosen = transformations if transformations is not None else transform_types
+        # Prefer external cache if provided, else internal shared cache
+        cache_dict = cache if cache is not None else _internal_cache
+        return transform_single_image_for_training(
+            img_path=img_path,
+            item=item,
+            img_size=img_size,
+            cfg=cfg,
+            transform_types=chosen,
+            apply_augmentation=apply_augmentation,
+            extern_cache=cache_dict,
+            logger=logger,
+        )
+
+    return transform_fn
