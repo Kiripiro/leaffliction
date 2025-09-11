@@ -210,6 +210,85 @@ def imwrite_bgr(path: Path, rgb_img) -> None:
     cv2.imwrite(str(path), bgr)
 
 
+def create_mosaic(original_rgb, filter_results, image_number):
+    """
+    Crée une mosaïque avec l'image originale et tous les filtres appliqués
+
+    Args:
+        original_rgb: Image originale en RGB
+        filter_results: Dictionnaire avec les résultats de chaque filtre
+        image_number: Numéro de l'image pour le nom de fichier
+
+    Returns:
+        Mosaïque RGB combinée
+    """
+    # Définir la taille cible pour chaque vignette
+    target_size = 300
+
+    # Redimensionner l'image originale
+    original_resized = cv2.resize(original_rgb, (target_size, target_size))
+
+    # Liste des images pour la mosaïque (commencer par l'originale)
+    images = [("Original", original_resized)]
+
+    # Ajouter les résultats des filtres
+    for filter_name, filter_image in filter_results.items():
+        if filter_image is not None:
+            # S'assurer que l'image est en RGB
+            if filter_image.ndim == 2:
+                filter_image = cv2.cvtColor(filter_image, cv2.COLOR_GRAY2RGB)
+            elif filter_image.shape[2] == 1:
+                filter_image = cv2.cvtColor(filter_image, cv2.COLOR_GRAY2RGB)
+
+            resized_filter = cv2.resize(filter_image, (target_size, target_size))
+            images.append((filter_name, resized_filter))
+
+    # Calculer les dimensions de la mosaïque (3 colonnes)
+    cols = 3
+    rows = (len(images) + cols - 1) // cols
+
+    # Créer la mosaïque
+    mosaic_width = cols * target_size
+    mosaic_height = rows * target_size
+    mosaic = np.ones((mosaic_height, mosaic_width, 3), dtype=np.uint8) * 255
+
+    # Placer chaque image dans la mosaïque avec son titre
+    for idx, (title, img) in enumerate(images):
+        row = idx // cols
+        col = idx % cols
+
+        y_start = row * target_size
+        x_start = col * target_size
+
+        # Ajouter l'image
+        mosaic[y_start : y_start + target_size, x_start : x_start + target_size] = img
+
+        # Ajouter le titre au-dessus de l'image (sur un fond semi-transparent)
+        text_height = 25
+        overlay = mosaic.copy()
+        cv2.rectangle(
+            overlay,
+            (x_start, y_start),
+            (x_start + target_size, y_start + text_height),
+            (0, 0, 0),
+            -1,
+        )
+        mosaic = cv2.addWeighted(mosaic, 0.7, overlay, 0.3, 0)
+
+        # Texte en blanc
+        cv2.putText(
+            mosaic,
+            title,
+            (x_start + 10, y_start + 18),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2,
+        )
+
+    return mosaic
+
+
 def pil_read_rgb(path: Path):
     """Read image as RGB using PIL with EXIF orientation correction"""
     from PIL import Image, ImageOps
@@ -376,11 +455,15 @@ def process_single_image(params: ProcessArgs) -> List[Path]:  # noqa: C901
     pipe = TransformPipeline(params.cfg)
     saved: List[Path] = []
 
+    # Dictionnaire pour stocker les résultats des filtres pour la mosaïque
+    filter_results = {}
+
     names = output_names(params.img_path.stem)
 
     # Blur
     if "Blur" in params.types:
         blur_img = pipe.blur(rgb)
+        filter_results["Blur"] = blur_img
         out = params.out_dir / names["Blur"]
         if params.overwrite or (not params.skip_existing or not out.exists()):
             imwrite_bgr(out, blur_img)
@@ -402,11 +485,13 @@ def process_single_image(params: ProcessArgs) -> List[Path]:  # noqa: C901
             from srcs.cli.filters.mask import apply_mask_filter
 
             masked_rgb = apply_mask_filter(rgb, params.cfg, pipe.make_mask)
+            filter_results["Mask"] = masked_rgb
             out = params.out_dir / names["Mask"]
             if params.overwrite or (not params.skip_existing or not out.exists()):
                 imwrite_bgr(out, masked_rgb)
                 saved.append(out)
         else:
+            filter_results["Mask"] = rgb
             out = params.out_dir / names["Mask"]
             if params.overwrite or (not params.skip_existing or not out.exists()):
                 imwrite_bgr(out, rgb)
@@ -415,6 +500,7 @@ def process_single_image(params: ProcessArgs) -> List[Path]:  # noqa: C901
     # ROI
     if "ROI" in params.types:
         roi_img, roi_vis, _ = pipe.roi(rgb, contour)
+        filter_results["ROI"] = roi_vis if roi_vis is not None else rgb
         out = params.out_dir / names["ROI"]
         if params.overwrite or (not params.skip_existing or not out.exists()):
             imwrite_bgr(out, roi_vis if roi_vis is not None else rgb)
@@ -423,6 +509,7 @@ def process_single_image(params: ProcessArgs) -> List[Path]:  # noqa: C901
     # Analyze
     if "Analyze" in params.types:
         analyze_img = pipe.analyze(rgb, mask_img, contour)
+        filter_results["Analyze"] = analyze_img
         out = params.out_dir / names["Analyze"]
         if params.overwrite or (not params.skip_existing or not out.exists()):
             imwrite_bgr(out, analyze_img)
@@ -431,6 +518,7 @@ def process_single_image(params: ProcessArgs) -> List[Path]:  # noqa: C901
     # Landmarks
     if "Landmarks" in params.types:
         lm_img = pipe.pseudolandmarks(rgb, contour)
+        filter_results["Landmarks"] = lm_img
         out = params.out_dir / names["Landmarks"]
         if params.overwrite or (not params.skip_existing or not out.exists()):
             imwrite_bgr(out, lm_img)
@@ -439,6 +527,7 @@ def process_single_image(params: ProcessArgs) -> List[Path]:  # noqa: C901
     # Hist
     if "Hist" in params.types:
         hist_img = pipe.histogram_hsv(rgb)
+        filter_results["Hist"] = hist_img
         out = params.out_dir / names["Hist"]
         if params.overwrite or (not params.skip_existing or not out.exists()):
             imwrite_bgr(out, hist_img)
@@ -449,10 +538,28 @@ def process_single_image(params: ProcessArgs) -> List[Path]:  # noqa: C901
         brown_img, brown_percentage, brown_count = pipe.detect_brown_spots(
             rgb, mask_img
         )
+        filter_results["Brown"] = brown_img
         out = params.out_dir / names["Brown"]
         if params.overwrite or (not params.skip_existing or not out.exists()):
             imwrite_bgr(out, brown_img)
             saved.append(out)
+
+    # Créer la mosaïque si nous avons des résultats de filtres
+    if filter_results:
+        # Extraire le numéro d'image du nom de fichier
+        import re
+
+        match = re.search(r"image \((\d+)\)", params.img_path.stem)
+        image_number = match.group(1) if match else params.img_path.stem
+
+        # Créer la mosaïque
+        mosaic = create_mosaic(rgb, filter_results, image_number)
+
+        # Sauvegarder la mosaïque
+        mosaic_path = params.out_dir / f"image{image_number}_mosaic.jpg"
+        imwrite_bgr(mosaic_path, mosaic)
+        saved.append(mosaic_path)
+        print(f"Mosaïque créée : {mosaic_path}")
 
     return saved
 
