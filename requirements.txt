@@ -1,5 +1,7 @@
-matplotlib
-Pillow>=9.0.0
 numpy>=1.21.0
+keras>=3.0.0
+tensorflow>=2.15
+pillow
+matplotlib
 seaborn
 scikit-learn

@@ -7,7 +7,8 @@ from pathlib import Path
 from srcs.predict.prediction_visualizer import PredictionVisualizer
 from srcs.predict.predictor import Predictor
 from srcs.utils.common import get_logger
-from srcs.utils.image_utils import DisplayUtils, ImageLoader
+from srcs.utils.image_utils import ImageLoader
+from srcs.utils.visualization_utils import DisplayUtils
 
 logger = get_logger(__name__)
 
@@ -199,14 +200,12 @@ def main():
                 )
                 logger.info(f"Results saved to: {output_file}")
 
-            # Create and display confusion matrix
-            cm_path = Path("prediction_output") / "confusion_matrix.png"
-            confusion_matrix_file = DisplayUtils.create_confusion_matrix(
-                results, cm_path
+            dashboard_dir = Path("prediction_output")
+            dashboard_file = DisplayUtils.create_batch_dashboard(
+                results, dashboard_dir / "batch_dashboard.png"
             )
-            if confusion_matrix_file:
-                logger.info(f"Confusion matrix saved to: {confusion_matrix_file}")
-                DisplayUtils.open_image_viewer(confusion_matrix_file)
+            if dashboard_file:
+                DisplayUtils.open_image_viewer(dashboard_file)
 
             logger.info("Batch prediction completed successfully")
 
