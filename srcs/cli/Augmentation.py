@@ -23,9 +23,9 @@ Available transformations:
   distortion - Add noise and adjust contrast
 
 Examples:
-  python -m srcs.cli.augmentation flip image.jpg
-  python -m srcs.cli.augmentation rotate --output custom_output.jpg image.jpg
-  python -m srcs.cli.augmentation crop --seed 42 image.jpg
+  python srcs/cli/Augmentation.py flip image.jpg
+  python srcs/cli/Augmentation.py rotate --output custom_output.jpg image.jpg
+  python srcs/cli/Augmentation.py crop --seed 42 image.jpg
         """,
     )
 
