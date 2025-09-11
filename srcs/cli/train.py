@@ -177,7 +177,7 @@ def setup_mixed_precision(no_mixed_precision: bool) -> None:
         try:
             mixed_precision.set_global_policy("mixed_float16")
             LOGGER.info("Mixed precision enabled (mixed_float16)")
-        except Exception as exc:
+        except (ValueError, AttributeError) as exc:
             LOGGER.warning("Cannot enable mixed precision: %s", exc)
 
 
