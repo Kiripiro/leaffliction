@@ -16,6 +16,8 @@ dependencies = [
 ]
 
 [project.scripts]
+leaffliction-distribution = "srcs.cli.Distribution:main"
+leaffliction-balance_dataset = "srcs.preprocessing.balance_dataset:main"
 leaffliction-train = "srcs.cli.train:main"
 leaffliction-split = "srcs.cli.split:main"
 
