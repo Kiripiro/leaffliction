@@ -58,7 +58,7 @@ def plot_confusion_png(
     """
     try:
         import matplotlib.pyplot as plt
-    except Exception as e:
+    except ImportError as e:
         LOGGER.warning("matplotlib unavailable, skipping confusion matrix PNG: %s", e)
         return
 
