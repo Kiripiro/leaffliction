@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import random
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -30,6 +31,8 @@ def setup_sequence_logging(
     """
     logger = logging.getLogger("ManifestSequence")
     logger.setLevel(level)
+    # Avoid duplicate logs via root logger
+    logger.propagate = False
 
     # Supprimer les handlers existants
     logger.handlers.clear()
@@ -52,7 +55,9 @@ def setup_sequence_logging(
 
     # Handler console (optionnel)
     if also_console:
-        console_handler = logging.StreamHandler()
+        # Send console logs to stderr so they don't get hidden by
+        # Keras progbar on stdout
+        console_handler = logging.StreamHandler(sys.stderr)
         console_handler.setLevel(level)
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
@@ -89,6 +94,7 @@ class ManifestSequence(Sequence):
             Callable[[Path, ManifestItem, int], Tuple[np.ndarray, np.ndarray]]
         ] = None,
         # New options
+        transformation: bool = True,
         transform_types: Optional[Tuple[str, ...]] = None,
         enforce_unique_filters: bool = True,
         logger: Optional[logging.Logger] = None,
@@ -112,6 +118,8 @@ class ManifestSequence(Sequence):
         # Avoid double-parallelism by default: keep internal workers at 1
         self.workers = max(1, int(workers))
         self.transform = transform
+        # Global switch to enable/disable transform pipeline
+        self.transformation = bool(transformation)
         # New transformation control
         self.transform_types = transform_types
         self.enforce_unique_filters = enforce_unique_filters
@@ -193,73 +201,37 @@ class ManifestSequence(Sequence):
         item_start_time = time.time()
         it = self.items[i]
 
-        if self.transform is not None:
-            # Determine which transforms to apply for this call
+        if self.transformation and self.transform is not None:
+            # Determine which transforms to apply for this call (for logging only)
             transforms_for_call = self._compute_transforms_to_apply(Path(it.src))
             if transforms_for_call is None:
                 self.logger.debug(
                     "[%s] Using transform's default configuration (no override)",
                     it.id,
                 )
-            if transforms_for_call is not None and len(transforms_for_call) == 0:
-                # Nothing new to apply, reuse the last cached result if present
+            elif len(transforms_for_call) == 0:
                 self.logger.debug(
-                    "[%s] No new transforms to apply for %s; reusing cached or no-op",
+                    "[%s] No new transforms to apply for %s; proceeding with transform",
                     it.id,
                     it.src,
                 )
-                cache_key = (
-                    str(it.src),
-                    int(self.img_size),
-                    tuple(self.transform_types or ()),
-                )
-                if cache_key in self._extern_cache:
-                    orig_uint8, x_float32 = self._extern_cache[cache_key]
-                    self.logger.debug("[%s] Loaded from cache", it.id)
-                else:
-                    # Fall back to calling transform with an empty list (no-op/resize)
-                    transform_start = time.time()
-                    orig_uint8, x_float32 = self.transform(
-                        Path(it.src),
-                        it,
-                        self.img_size,
-                        transformations=(),
-                        cache=self._extern_cache,
-                        logger=self.logger,
-                    )
-                    transform_time = time.time() - transform_start
-                    self.logger.debug(
-                        "[%s] No-op transform completed in %.3fs", it.id, transform_time
-                    )
             else:
-                # Apply selected transforms and cache
-                if transforms_for_call is not None:
-                    self.logger.debug(
-                        "[%s] Applying transforms %s to %s",
-                        it.id,
-                        ",".join(transforms_for_call),
-                        it.src,
-                    )
-                transform_start = time.time()
-                orig_uint8, x_float32 = self.transform(
-                    Path(it.src),
-                    it,
-                    self.img_size,
-                    transformations=transforms_for_call,
-                    cache=self._extern_cache,
-                    logger=self.logger,
+                self.logger.debug(
+                    "[%s] Applying transforms %s to %s (delegated to transform)",
+                    it.id,
+                    ",".join(transforms_for_call),
+                    it.src,
                 )
-                transform_time = time.time() - transform_start
-                if transforms_for_call is not None:
-                    self.logger.debug(
-                        "[%s] Transforms %s completed in %.3fs",
-                        it.id,
-                        ",".join(transforms_for_call),
-                        transform_time,
-                    )
-                # Mark transforms as applied for this image
-                if transforms_for_call is not None:
-                    self._mark_applied(Path(it.src), transforms_for_call)
+            transform_start = time.time()
+            orig_uint8, x_float32 = self.transform(
+                Path(it.src),
+                it,
+                self.img_size,
+            )
+            transform_time = time.time() - transform_start
+            self.logger.debug(
+                "[%s] Transform completed in %.3fs", it.id, transform_time
+            )
         else:
             self.logger.debug("[%s] Loading without transforms", it.id)
             load_start = time.time()

@@ -3,3 +3,6 @@ keras>=3.0.0
 tensorflow>=2.15
 pillow
 matplotlib
+pyyaml
+opencv-python
+plantcv>=3.14
