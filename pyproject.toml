@@ -22,6 +22,7 @@ leaffliction-train = "srcs.cli.train:main"
 leaffliction-split = "srcs.cli.split:main"
 leaffliction-predict = "srcs.cli.predict:main"
 leaffliction-augment = "srcs.cli.Augmentation:main"
+leaffliction-transform = "srcs.cli.Transformation:main"
 
 [tool.setuptools]
 packages = ["srcs"]
