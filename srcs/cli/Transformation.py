@@ -331,12 +331,12 @@ class TransformPipeline:
         pcv.params.debug = None
 
     def blur(self, rgb):
-        from srcs.cli.filters.blur import apply_blur_filter
+        from srcs.transform.filters.blur import apply_blur_filter
 
         return apply_blur_filter(rgb, self.cfg, self.make_mask)
 
     def make_mask(self, rgb):
-        from srcs.cli.filters.mask import make_mask
+        from srcs.transform.filters.mask import make_mask
 
         return make_mask(rgb, self.cfg)
 
@@ -365,27 +365,27 @@ class TransformPipeline:
         return apply_mask(rgb, mask, mask_color)
 
     def roi(self, rgb, contour):
-        from srcs.cli.filters.roi import apply_roi_filter
+        from srcs.transform.filters.roi import apply_roi_filter
 
         return apply_roi_filter(rgb, contour, self.cfg)
 
     def analyze(self, rgb, mask, contour):
-        from srcs.cli.filters.analyze import apply_analyze_filter
+        from srcs.transform.filters.analyze import apply_analyze_filter
 
         return apply_analyze_filter(rgb, mask, contour, self.cfg)
 
     def pseudolandmarks(self, rgb, contour):
-        from srcs.cli.filters.landmarks import apply_landmarks_filter
+        from srcs.transform.filters.landmarks import apply_landmarks_filter
 
         return apply_landmarks_filter(rgb, contour, self.cfg, self.make_mask)
 
     def detect_brown_spots(self, rgb, mask):
-        from srcs.cli.filters.brown import apply_brown_filter
+        from srcs.transform.filters.brown import apply_brown_filter
 
         return apply_brown_filter(rgb, mask, self.cfg)
 
     def histogram_hsv(self, rgb):
-        from srcs.cli.filters.hist import apply_histogram_filter
+        from srcs.transform.filters.hist import apply_histogram_filter
 
         return apply_histogram_filter(rgb, self.cfg)
 
@@ -453,7 +453,7 @@ def process_single_image(params: ProcessArgs) -> List[Path]:  # noqa: C901
     if "Mask" in params.types:
         if mask_img is not None:
             # Apply mask to RGB for visualization
-            from srcs.cli.filters.mask import apply_mask_filter
+            from srcs.transform.filters.mask import apply_mask_filter
 
             mask_vis = apply_mask_filter(rgb, params.cfg, pipe.make_mask)
             filter_results["Mask"] = mask_vis
@@ -587,7 +587,9 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated transforms to run",
     )
     p.add_argument(
-        "--config", default="transform/config.yaml", help="YAML config path (optional)"
+        "--config",
+        default="srcs/transform/config.yaml",
+        help="YAML config path (optional)",
     )
     p.add_argument(
         "--workers", type=int, default=0, help="Number of processes (0=auto)"
@@ -836,7 +838,7 @@ def transform_single_image_for_training(  # noqa: C901
             step_cache["Blur"] = blur_img
 
         if "Mask" in transform_types and mask_img is not None:
-            from srcs.cli.filters.mask import apply_mask_filter
+            from srcs.transform.filters.mask import apply_mask_filter
 
             masked_rgb = apply_mask_filter(original_rgb, cfg, pipe.make_mask)
             transformed_img = masked_rgb
