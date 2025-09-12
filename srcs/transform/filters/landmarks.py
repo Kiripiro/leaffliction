@@ -7,15 +7,23 @@ import cv2
 import numpy as np
 
 try:
-    from ..Transformation import TransformConfig, draw_text, resample_contour
-except ImportError:
+    from srcs.cli.Transformation import (
+        TransformConfig,
+        draw_text,
+        resample_contour,
+    )
+except Exception:
     import sys
     from pathlib import Path
 
-    parent_dir = Path(__file__).parent.parent
+    parent_dir = Path(__file__).parent.parent.parent
     if str(parent_dir) not in sys.path:
         sys.path.insert(0, str(parent_dir))
-    from Transformation import TransformConfig, draw_text, resample_contour
+    from srcs.cli.Transformation import (
+        TransformConfig,
+        draw_text,
+        resample_contour,
+    )
 
 
 def _create_enhanced_mask(rgb, cfg, mask_bool):

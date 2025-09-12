@@ -7,15 +7,23 @@ import numpy as np
 from plantcv import plantcv as pcv
 
 try:
-    from ..Transformation import TransformConfig, contour_to_mask, largest_contour
-except ImportError:
+    from srcs.cli.Transformation import (
+        TransformConfig,
+        contour_to_mask,
+        largest_contour,
+    )
+except Exception:
     import sys
     from pathlib import Path
 
-    parent_dir = Path(__file__).parent.parent
+    parent_dir = Path(__file__).parent.parent.parent
     if str(parent_dir) not in sys.path:
         sys.path.insert(0, str(parent_dir))
-    from Transformation import TransformConfig, contour_to_mask, largest_contour
+    from srcs.cli.Transformation import (
+        TransformConfig,
+        contour_to_mask,
+        largest_contour,
+    )
 
 
 def _prepare_working_image(
