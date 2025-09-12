@@ -25,6 +25,11 @@ Runtime depedencies:
 ```bash
 pip install -r requirements.txt
 ```
+Make the package :
+
+```bash
+pip install -e .
+```
 
 ## 3. Configure pre-commit hooks
 

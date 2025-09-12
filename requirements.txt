@@ -3,6 +3,9 @@ keras>=3.0.0
 tensorflow>=2.15
 pillow
 matplotlib
+flake8
+flake8-bugbear
+flake8-comprehensions
 pyyaml
 opencv-python
 plantcv>=3.14

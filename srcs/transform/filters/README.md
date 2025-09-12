@@ -99,13 +99,13 @@ Image d'entrée → Masque → ROI → Analyse → Landmarks → Détection mala
 
 ```bash
 # Depuis la racine du projet
-python3 srcs/cli/Transformation.py --image images/Apple/Apple_healthy/image\ \(1000\).JPG
+python3 srcs/cli/Transformation.py images/Apple/Apple_Black_rot/image\ \(2\).JPG
 
 # Avec types spécifiques
-python3 srcs/cli/Transformation.py --image images/Apple/Apple_healthy/image\ \(1000\).JPG --types Mask,Brown,Landmarks
+python3 srcs/cli/Transformation.py images/Apple/Apple_Black_rot/image\ \(2\).JPG --types Mask,Brown,Landmarks
 
 # Avec configuration personnalisée
-python3 srcs/cli/Transformation.py --image images/Apple/Apple_healthy/image\ \(1000\).JPG --config transform/config.yaml
+python3 srcs/cli/Transformation.py images/Apple/Apple_Black_rot/image\ \(2\).JPG --config transform/config.yaml
 ```
 
 ### Traitement par lots

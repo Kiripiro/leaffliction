@@ -12,6 +12,8 @@ The augmentation system consists of several interconnected components:
 2. **DatasetBalancer** (`srcs/preprocessing/dataset_balancer.py`) - High-level orchestration for dataset operations
 3. **ImageLoader** (`srcs/utils/image_utils.py`) - Image I/O utilities
 4. **CLI Interface** (`srcs/cli/Augmentation.py`) - Command-line interface
+5. **Command Single Run** (`leaffliction-augment images/Apple/Apple_Black_rot/image\ \(100\).JPG`)
+
 
 ## Available Transformations
 
