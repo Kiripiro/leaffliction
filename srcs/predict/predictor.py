@@ -38,7 +38,9 @@ class Predictor:
         image_path = Path(image_path)
         logger.info(f"Predicting image: {image_path}")
 
-        original_array, processed_array = self.image_processor.process_image(image_path)
+        original_array, processed_array, transformed_array = (
+            self.image_processor.process_image(image_path)
+        )
         probabilities = self.model_loader.model.predict(processed_array, verbose=0)[0]
 
         top_idx = int(np.argmax(probabilities))
@@ -58,7 +60,7 @@ class Predictor:
             "confidence": confidence,
             "all_probabilities": all_probabilities,
             "original_array": original_array,
-            "processed_array": processed_array.squeeze(0),
+            "processed_array": transformed_array,
         }
 
     def predict_batch(self, image_paths: List[str | Path]) -> List[Dict[str, Any]]:
@@ -73,9 +75,11 @@ class Predictor:
 
         for img_path in paths:
             try:
-                original, processed = self.image_processor.process_image(img_path)
+                original, processed, transformed = self.image_processor.process_image(
+                    img_path
+                )
                 processed_data.append(processed[0])
-                original_arrays.append((img_path, original, processed[0]))
+                original_arrays.append((img_path, original, transformed))
             except Exception as e:
                 logger.error(f"Error processing image {img_path}: {e}")
                 continue
@@ -90,7 +94,7 @@ class Predictor:
         batch_probabilities = self.model_loader.model.predict(batch_array, verbose=0)
 
         results = []
-        for i, (img_path, original, processed) in enumerate(original_arrays):
+        for i, (img_path, original, transformed) in enumerate(original_arrays):
             probabilities = batch_probabilities[i]
 
             top_idx = int(np.argmax(probabilities))
@@ -109,7 +113,7 @@ class Predictor:
                     "confidence": confidence,
                     "all_probabilities": all_probabilities,
                     "original_array": original,
-                    "processed_array": processed,
+                    "processed_array": transformed,
                 }
             )
 

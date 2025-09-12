@@ -59,7 +59,7 @@ class PredictionVisualizer:
         draw.text((10, display_size[1] + 5), "Original", font=font, fill="gray")
         draw.text(
             (display_size[0] + 30, display_size[1] + 5),
-            "Processed",
+            "Transformed",
             font=font,
             fill="gray",
         )
