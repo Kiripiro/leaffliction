@@ -1,10 +1,10 @@
 # Distribution CLI
 
-Analyze dataset distribution (root/PLANT/CLASS/\*.jpg). Produces cumulative CSV and per-plant bar + pie charts.
+Analyze dataset distribution (root/PLANT/CLASS/\*.jpg). Produces a cumulative CSV and per‑plant bar + pie charts.
 
 ## Usage
 
-Basic (auto-detect `images/` or CWD):
+Basic (auto-detects `images/` or CWD):
 
 ```bash
 python srcs/cli/Distribution.py

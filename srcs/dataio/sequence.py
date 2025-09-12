@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
-from keras.utils import Sequence, img_to_array, load_img
+from keras.utils import Sequence
 
 from srcs.dataio.manifest import ManifestItem
+from srcs.utils.image_utils import ImageLoader, ImageTransforms
 
 
 def setup_sequence_logging(
@@ -241,20 +242,13 @@ class ManifestSequence(Sequence):
                 "[%s] Transform completed in %.3fs", it.id, transform_time
             )
         else:
-            self.logger.debug("[%s] Loading without transforms", it.id)
-            load_start = time.time()
-            resized = img_to_array(
-                load_img(
-                    it.src,
-                    target_size=(self.img_size, self.img_size),
-                    color_mode="rgb",
-                )
+            img = ImageLoader.load_pil_image(it.src, ensure_rgb=True)
+            img_resized = ImageTransforms.resize_image(
+                img, (self.img_size, self.img_size)
             )
-            x_float32 = (resized / 255.0).astype("float32")
-            orig_uint8 = np.clip(resized, 0, 255).astype("uint8")
-            load_time = time.time() - load_start
-            self.logger.debug("[%s] Basic load completed in %.3fs", it.id, load_time)
-
+            resized = np.array(img_resized)
+            x_float32 = ImageTransforms.normalize_array(resized)
+            orig_uint8 = resized.astype("uint8")
         y: Optional[np.ndarray] = None
         if self.label2idx is not None:
             lab_idx = self.label2idx[it.label]
