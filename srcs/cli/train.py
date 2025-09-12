@@ -29,12 +29,12 @@ LOGGER = logging.getLogger(__name__)
 
 REGULARIZED_CFG = {
     "optimizer": "adamw",
-    "lr": 1e-3,
-    "weight_decay": 1e-4,
-    "label_smoothing": 0.05,
+    "lr": 0.002,
+    "weight_decay": 0.00005,
+    "label_smoothing": 0.03,
     "cosine_decay": True,
     "ema_decay": 0.999,
-    "clipnorm": 1.0,
+    "clipnorm": 0.5,
     "cache": False,
 }
 
@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--manifest",
         type=Path,
-        default=Path("datasets/manifest_augmented.json"),
+        default=Path("artifacts/datasets/manifest_augmented.json"),
         help=(
             "Path to manifest_augmented.json "
             "(falls back to manifest_split.json if not found)"

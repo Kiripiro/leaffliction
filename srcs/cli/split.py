@@ -283,7 +283,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path("datasets"),
+        default=Path("artifacts/datasets"),
         help="Output root for manifest / summary / views.",
     )
     parser.add_argument(
