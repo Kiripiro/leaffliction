@@ -12,11 +12,7 @@ import numpy as np
 from keras import mixed_precision
 
 from srcs.dataio.manifest import build_label_mapping, load_manifest, select_items
-from srcs.dataio.sequence import ManifestSequence, setup_sequence_logging
-from srcs.dataio.transforms import (
-    create_inference_transform,
-    create_training_transform,
-)
+from srcs.dataio.sequence import ManifestSequence
 from srcs.model.cnn import adapt_normalization, build_leafcnn
 from srcs.train.utils import (
     build_callbacks,
@@ -101,59 +97,6 @@ def parse_args() -> argparse.Namespace:
         "--separable",
         action="store_true",
         help="Use depthwise-separable convolutions (lite)",
-    )
-    # Optional on-the-fly transform (pipeline)
-    p.add_argument(
-        "--use-pipeline-transform",
-        action="store_true",
-        help="Enable PlantCV pipeline transform during loading (train only by default)",
-    )
-    p.add_argument(
-        "--transform-iters",
-        type=int,
-        default=1,
-        help="Number of times to iterate through transform steps",
-    )
-    p.add_argument(
-        "--transform-types",
-        type=str,
-        default="",
-        help="Comma-separated transform types to apply (default = pipeline defaults)",
-    )
-    p.add_argument(
-        "--transform-on-val",
-        action="store_true",
-        help="Also apply pipeline transform on validation",
-    )
-    p.add_argument(
-        "--transform-config",
-        type=Path,
-        default=None,
-        help="YAML config file for the PlantCV pipeline (uses defaults if omitted)",
-    )
-    # Sequence logging controls
-    p.add_argument(
-        "--seq-log-level",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        default="DEBUG",
-        help="Logging level for data sequence",
-    )
-    p.add_argument(
-        "--log-level",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        default="DEBUG",
-        help="Root logging level",
-    )
-    p.add_argument(
-        "--seq-log-file",
-        type=Path,
-        default=Path("artifacts/sequence.log"),
-        help="File path for sequence logs",
-    )
-    p.add_argument(
-        "--no-seq-console",
-        action="store_true",
-        help="Disable console logs from sequence (file only)",
     )
     args = p.parse_args()
     if getattr(args, "tiny", False):
@@ -264,9 +207,6 @@ def create_data_sequences(
     args,
     cfg: Dict,
     num_classes: int,
-    logger: logging.Logger,
-    train_transform=None,
-    val_transform=None,
 ) -> Tuple[Any, Any]:
     """Create training and validation data sequences.
 
@@ -296,8 +236,6 @@ def create_data_sequences(
         one_hot=cfg["label_smoothing"] > 0.0,
         cache=cfg["cache"],
         workers=seq_workers,
-        logger=logger,
-        transform=train_transform,
     )
     val_seq = ManifestSequence(
         val_items,
@@ -311,8 +249,6 @@ def create_data_sequences(
         one_hot=cfg["label_smoothing"] > 0.0,
         cache=True,
         workers=seq_workers,
-        logger=logger,
-        transform=val_transform,
     )
 
     return train_seq, val_seq
@@ -484,7 +420,7 @@ def train_and_save_model(
 def main() -> None:
     """Main training function with refactored logic."""
     args = parse_args()
-    setup_logging(args.log_level)
+    setup_logging()
     random.seed(args.seed)
     np.random.seed(args.seed)
 
@@ -495,42 +431,8 @@ def main() -> None:
 
         setup_mixed_precision(args.no_mixed_precision)
         cfg = get_training_config(args.fast)
-        # Configure Sequence logger (stderr + file) at requested level
-        level = getattr(logging, str(args.seq_log_level).upper(), logging.INFO)
-        seq_logger = setup_sequence_logging(
-            str(args.seq_log_file), level=level, also_console=not args.no_seq_console
-        )
-        # Optional pipeline transform (uses transform/config.yaml by default)
-        train_transform = None
-        val_transform = None
-        if args.use_pipeline_transform:
-            types = (
-                [t.strip() for t in args.transform_types.split(",") if t.strip()]
-                if args.transform_types
-                else None
-            )
-            cfg_path = str(args.transform_config or Path("transform/config.yaml"))
-            train_transform = create_training_transform(
-                config_path=cfg_path,
-                transform_types=tuple(types) if types else None,
-                apply_augmentation=True,
-            )
-            if args.transform_on_val:
-                val_transform = create_inference_transform(
-                    config_path=cfg_path,
-                    transform_types=tuple(types) if types else None,
-                )
-
         train_seq, val_seq = create_data_sequences(
-            train_items,
-            val_items,
-            label2idx,
-            args,
-            cfg,
-            num_classes,
-            seq_logger,
-            train_transform=train_transform,
-            val_transform=val_transform,
+            train_items, val_items, label2idx, args, cfg, num_classes
         )
         model = build_and_compile_model(args, cfg, num_classes, train_seq)
         meta = create_training_metadata(args, cfg, num_classes, train_items, val_items)
