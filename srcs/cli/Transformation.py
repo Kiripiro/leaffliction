@@ -10,21 +10,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-# Try to import logging helper early (imports must stay at top for E402)
 try:
     from srcs.utils.common import setup_logging
 except ModuleNotFoundError:
     repo_root = Path(__file__).resolve().parents[2]
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
-    from srcs.utils.common import setup_logging  # type: ignore
+    from srcs.utils.common import setup_logging
 
-# Lazy imports to avoid circular imports
+import random
+import re
+
 import cv2
 import numpy as np
 import yaml
 
-# Limit thread oversubscription before importing numpy/opencv
 for _k in (
     "OPENCV_NUM_THREADS",
     "OMP_NUM_THREADS",
@@ -43,7 +43,6 @@ DEFAULT_TYPES = (
     "Hist",
     "Brown",
 )
-# Case-insensitive alias map to canonical transform names
 CANONICAL_TYPES: Dict[str, str] = {
     "blur": "Blur",
     "mask": "Mask",
@@ -64,27 +63,24 @@ CANONICAL_TYPES: Dict[str, str] = {
 @dataclass(frozen=True)
 class TransformConfig:
     gaussian_sigma: float
-    hsv_channel_for_mask: str  # 'h' | 's' | 'v'
+    hsv_channel_for_mask: str
     fill_size: int
-    morph_kernel: int  # odd
+    morph_kernel: int
     landmarks_count: int
-    roi_size: Tuple[int, int]  # (h, w)
-    # New: robust mask options
-    mask_strategy: str  # 'auto' | 'hsv_s' | 'hsv_v_dark' | 'hsv_h' | 'lab' | 'kmeans'
-    bg_bias: Optional[str]  # None|'light_bg'|'dark_bg'
+    roi_size: Tuple[int, int]
+    mask_strategy: str
+    bg_bias: Optional[str]
     grabcut_refine: bool
-    green_hue_range: Tuple[int, int]  # inclusive H range for green-ish leaves
+    green_hue_range: Tuple[int, int]
     min_object_area_ratio: float
     max_object_area_ratio: float
-    # Optional pre-upscale for mask detection
     mask_upscale_factor: float
-    mask_upscale_long_side: int  # if >0 and image long side < this, upscale to this
-    # Shadow handling options
+    mask_upscale_long_side: int
     shadow_suppression: bool
-    shadow_s_max: int  # pixels with saturation <= this and low V are considered shadow
-    shadow_v_method: str  # 'otsu' | 'percentile'
-    shadow_v_percentile: int  # used when method=percentile
-    # Brown/Disease Detection
+    shadow_s_max: int
+    shadow_v_method: str
+    shadow_v_percentile: int
+    shadow_morphology_kernel: int
     brown_hue_range: Tuple[int, int]
     brown_s_min: int
     brown_v_max: int
@@ -93,6 +89,7 @@ class TransformConfig:
     use_lab_brown: bool
     lab_b_min: int
     lab_a_min: int
+    debug_shadow_visualization: bool
 
 
 @dataclass(frozen=True)
@@ -136,6 +133,7 @@ def load_config(path: Optional[Path]) -> TransformConfig:
             "shadow_s_max",
             "shadow_v_method",
             "shadow_v_percentile",
+            "shadow_morphology_kernel",
             "brown_hue_range",
             "brown_s_min",
             "brown_v_max",
@@ -144,6 +142,7 @@ def load_config(path: Optional[Path]) -> TransformConfig:
             "use_lab_brown",
             "lab_b_min",
             "lab_a_min",
+            "debug_shadow_visualization",
         ]
 
         missing_fields = [field for field in required_fields if field not in data]
@@ -170,6 +169,7 @@ def load_config(path: Optional[Path]) -> TransformConfig:
             shadow_s_max=int(data["shadow_s_max"]),
             shadow_v_method=str(data["shadow_v_method"]),
             shadow_v_percentile=int(data["shadow_v_percentile"]),
+            shadow_morphology_kernel=int(data["shadow_morphology_kernel"]),
             brown_hue_range=tuple(data["brown_hue_range"]),  # type: ignore
             brown_s_min=int(data["brown_s_min"]),
             brown_v_max=int(data["brown_v_max"]),
@@ -178,27 +178,22 @@ def load_config(path: Optional[Path]) -> TransformConfig:
             use_lab_brown=bool(data["use_lab_brown"]),
             lab_b_min=int(data["lab_b_min"]),
             lab_a_min=int(data["lab_a_min"]),
+            debug_shadow_visualization=bool(data["debug_shadow_visualization"]),
         )
     except Exception as exc:
         logging.error("Failed to read configuration file (%s)", exc)
         sys.exit(1)
 
 
-# === COMMON UTILITY FUNCTIONS ===
-
-
 def is_image(path: Path) -> bool:
-    """Check if path is a valid image file"""
     return path.is_file() and path.suffix.lower() in IMAGE_EXTS
 
 
 def ensure_dir(path: Path) -> None:
-    """Create directory if it doesn't exist"""
     path.mkdir(parents=True, exist_ok=True)
 
 
 def imwrite_bgr(path: Path, rgb_img) -> None:
-    """Save RGB image to disk as BGR (OpenCV format)"""
     if rgb_img is None:
         return
     arr = np.asarray(rgb_img)
@@ -211,27 +206,9 @@ def imwrite_bgr(path: Path, rgb_img) -> None:
 
 
 def create_mosaic(original_rgb, filter_results, image_number):
-    """
-    Crée une mosaïque avec l'image originale et tous les filtres appliqués
-
-    Args:
-        original_rgb: Image originale en RGB
-        filter_results: Dictionnaire avec les résultats de chaque filtre
-        image_number: Numéro de l'image pour le nom de fichier
-
-    Returns:
-        Mosaïque RGB combinée
-    """
-    # Définir la taille cible pour chaque vignette
     target_size = 300
-
-    # Redimensionner l'image originale
     original_resized = cv2.resize(original_rgb, (target_size, target_size))
-
-    # Liste des images pour la mosaïque (commencer par l'originale)
     images = [("Original", original_resized)]
-
-    # Ajouter les résultats des filtres
     for filter_name, filter_image in filter_results.items():
         if filter_image is not None:
             # S'assurer que l'image est en RGB
@@ -243,16 +220,13 @@ def create_mosaic(original_rgb, filter_results, image_number):
             resized_filter = cv2.resize(filter_image, (target_size, target_size))
             images.append((filter_name, resized_filter))
 
-    # Calculer les dimensions de la mosaïque (3 colonnes)
     cols = 3
     rows = (len(images) + cols - 1) // cols
 
-    # Créer la mosaïque
     mosaic_width = cols * target_size
     mosaic_height = rows * target_size
-    mosaic = np.ones((mosaic_height, mosaic_width, 3), dtype=np.uint8) * 255
+    mosaic = np.zeros((mosaic_height, mosaic_width, 3), dtype=np.uint8)
 
-    # Placer chaque image dans la mosaïque avec son titre
     for idx, (title, img) in enumerate(images):
         row = idx // cols
         col = idx % cols
@@ -290,7 +264,6 @@ def create_mosaic(original_rgb, filter_results, image_number):
 
 
 def pil_read_rgb(path: Path):
-    """Read image as RGB using PIL with EXIF orientation correction"""
     from PIL import Image, ImageOps
 
     with Image.open(path) as im:
@@ -300,7 +273,6 @@ def pil_read_rgb(path: Path):
 
 
 def draw_text(img, text: str, org=(10, 24)):
-    """Draw text overlay on image"""
     if img is None:
         return None
     out = img.copy()
@@ -311,7 +283,6 @@ def draw_text(img, text: str, org=(10, 24)):
 
 
 def largest_contour(mask):
-    """Find the largest contour in a binary mask"""
     cnts, _ = cv2.findContours(
         mask.astype("uint8"), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
@@ -322,7 +293,6 @@ def largest_contour(mask):
 
 
 def contour_to_mask(shape_hw: Tuple[int, int], contour):
-    """Convert contour to binary mask"""
     h, w = shape_hw
     out = np.zeros((h, w), dtype="uint8")
     cv2.drawContours(out, [contour], -1, color=255, thickness=-1)
@@ -330,12 +300,9 @@ def contour_to_mask(shape_hw: Tuple[int, int], contour):
 
 
 def resample_contour(contour, n: int):
-    """Resample contour to n equally spaced points"""
-    pts = contour[:, 0, :].astype(float)  # (N,2)
-    # Ensure closed loop
+    pts = contour[:, 0, :].astype(float)
     if not (pts[0] == pts[-1]).all():
         pts = np.vstack([pts, pts[0]])
-    # Cumulative arc length
     seg = np.linalg.norm(pts[1:] - pts[:-1], axis=1)
     cum = np.concatenate([[0.0], seg.cumsum()])
     total = cum[-1]
@@ -347,7 +314,6 @@ def resample_contour(contour, n: int):
     for t in targets:
         while j + 1 < len(cum) and cum[j + 1] < t:
             j += 1
-        # interpolate between pts[j] and pts[j+1]
         if j + 1 >= len(pts):
             res.append(pts[-1])
         else:
@@ -360,57 +326,58 @@ def resample_contour(contour, n: int):
 class TransformPipeline:
     def __init__(self, cfg: TransformConfig) -> None:
         self.cfg = cfg
-        # PlantCV global params
-        from plantcv import plantcv as pcv  # type: ignore
+        from plantcv import plantcv as pcv
 
         pcv.params.debug = None
 
-    # --- core steps ---
     def blur(self, rgb):
-        """Create a saliency map showing important regions in white/gray
-        and less important in black"""
         from srcs.cli.filters.blur import apply_blur_filter
 
         return apply_blur_filter(rgb, self.cfg, self.make_mask)
 
     def make_mask(self, rgb):
-        """Create robust leaf mask using various strategies"""
         from srcs.cli.filters.mask import make_mask
 
         return make_mask(rgb, self.cfg)
 
+    def create_masked_rgb(self, rgb, mask):
+        if mask is None:
+            return rgb
+
+        if mask.ndim == 2:
+            binary_mask = mask > 0
+        else:
+            binary_mask = mask[..., 0] > 0
+
+        masked_rgb = rgb.copy()
+        masked_rgb[~binary_mask] = [255, 255, 255]
+
+        return masked_rgb
+
     def roi(self, rgb, contour):
-        """Extract ROI (Region of Interest) from the image"""
         from srcs.cli.filters.roi import apply_roi_filter
 
         return apply_roi_filter(rgb, contour, self.cfg)
 
     def analyze(self, rgb, mask, contour):
-        """Analyze leaf shape and create visual overlay"""
         from srcs.cli.filters.analyze import apply_analyze_filter
 
         return apply_analyze_filter(rgb, mask, contour, self.cfg)
 
     def pseudolandmarks(self, rgb, contour):
-        """Place pseudolandmarks on leaf features"""
         from srcs.cli.filters.landmarks import apply_landmarks_filter
 
         return apply_landmarks_filter(rgb, contour, self.cfg, self.make_mask)
 
     def detect_brown_spots(self, rgb, mask):
-        """Detect brown/diseased areas in leaf"""
         from srcs.cli.filters.brown import apply_brown_filter
 
         return apply_brown_filter(rgb, mask, self.cfg)
 
     def histogram_hsv(self, rgb):
-        """Create HSV histogram visualization"""
         from srcs.cli.filters.hist import apply_histogram_filter
 
         return apply_histogram_filter(rgb, self.cfg)
-
-
-# === OUTPUT AND PROCESSING FUNCTIONS ===
 
 
 def build_types_filter(arg: Optional[str]) -> Tuple[str, ...]:
@@ -424,7 +391,6 @@ def build_types_filter(arg: Optional[str]) -> Tuple[str, ...]:
             result.append(CANONICAL_TYPES[key])
         else:
             logging.warning("Unknown transform type skipped: %s", s)
-    # Preserve order, drop duplicates
     dedup = []
     for _name in result:
         if _name not in dedup:
@@ -445,7 +411,6 @@ def output_names(stem: str) -> Dict[str, str]:
 
 
 def process_single_image(params: ProcessArgs) -> List[Path]:  # noqa: C901
-    # Read
     try:
         rgb = pil_read_rgb(params.img_path)
     except Exception as exc:
@@ -455,40 +420,36 @@ def process_single_image(params: ProcessArgs) -> List[Path]:  # noqa: C901
     pipe = TransformPipeline(params.cfg)
     saved: List[Path] = []
 
-    # Dictionnaire pour stocker les résultats des filtres pour la mosaïque
     filter_results = {}
 
     names = output_names(params.img_path.stem)
 
-    # Blur
-    if "Blur" in params.types:
-        blur_img = pipe.blur(rgb)
-        filter_results["Blur"] = blur_img
-        out = params.out_dir / names["Blur"]
-        if params.overwrite or (not params.skip_existing or not out.exists()):
-            imwrite_bgr(out, blur_img)
-            saved.append(out)
-
-    # Mask
     mask_img, contour = (None, None)
+    masked_rgb = rgb  # Default to original image
+
     if (
         "Mask" in params.types
         or "ROI" in params.types
         or "Analyze" in params.types
         or "Landmarks" in params.types
         or "Brown" in params.types
+        or "Blur" in params.types
     ):
         mask_img, contour = pipe.make_mask(rgb)
+        # Create masked RGB for all other filters to use
+        if mask_img is not None:
+            masked_rgb = pipe.create_masked_rgb(rgb, mask_img)
+
     if "Mask" in params.types:
         if mask_img is not None:
-            # Apply mask to RGB
+            # Apply mask to RGB for visualization
             from srcs.cli.filters.mask import apply_mask_filter
 
-            masked_rgb = apply_mask_filter(rgb, params.cfg, pipe.make_mask)
-            filter_results["Mask"] = masked_rgb
+            mask_vis = apply_mask_filter(rgb, params.cfg, pipe.make_mask)
+            filter_results["Mask"] = mask_vis
             out = params.out_dir / names["Mask"]
             if params.overwrite or (not params.skip_existing or not out.exists()):
-                imwrite_bgr(out, masked_rgb)
+                imwrite_bgr(out, mask_vis)
                 saved.append(out)
         else:
             filter_results["Mask"] = rgb
@@ -497,46 +458,49 @@ def process_single_image(params: ProcessArgs) -> List[Path]:  # noqa: C901
                 imwrite_bgr(out, rgb)
                 saved.append(out)
 
-    # ROI
-    if "ROI" in params.types:
-        roi_img, roi_vis, _ = pipe.roi(rgb, contour)
-        filter_results["ROI"] = roi_vis if roi_vis is not None else rgb
-        out = params.out_dir / names["ROI"]
+    if "Blur" in params.types:
+        blur_img = pipe.blur(masked_rgb)
+        filter_results["Blur"] = blur_img
+        out = params.out_dir / names["Blur"]
         if params.overwrite or (not params.skip_existing or not out.exists()):
-            imwrite_bgr(out, roi_vis if roi_vis is not None else rgb)
+            imwrite_bgr(out, blur_img)
             saved.append(out)
 
-    # Analyze
+    if "ROI" in params.types:
+        roi_img, roi_vis, _ = pipe.roi(masked_rgb, contour)
+        filter_results["ROI"] = roi_vis if roi_vis is not None else masked_rgb
+        out = params.out_dir / names["ROI"]
+        if params.overwrite or (not params.skip_existing or not out.exists()):
+            imwrite_bgr(out, roi_vis if roi_vis is not None else masked_rgb)
+            saved.append(out)
+
     if "Analyze" in params.types:
-        analyze_img = pipe.analyze(rgb, mask_img, contour)
+        analyze_img = pipe.analyze(masked_rgb, mask_img, contour)
         filter_results["Analyze"] = analyze_img
         out = params.out_dir / names["Analyze"]
         if params.overwrite or (not params.skip_existing or not out.exists()):
             imwrite_bgr(out, analyze_img)
             saved.append(out)
 
-    # Landmarks
     if "Landmarks" in params.types:
-        lm_img = pipe.pseudolandmarks(rgb, contour)
+        lm_img = pipe.pseudolandmarks(masked_rgb, contour)
         filter_results["Landmarks"] = lm_img
         out = params.out_dir / names["Landmarks"]
         if params.overwrite or (not params.skip_existing or not out.exists()):
             imwrite_bgr(out, lm_img)
             saved.append(out)
 
-    # Hist
     if "Hist" in params.types:
-        hist_img = pipe.histogram_hsv(rgb)
+        hist_img = pipe.histogram_hsv(masked_rgb)
         filter_results["Hist"] = hist_img
         out = params.out_dir / names["Hist"]
         if params.overwrite or (not params.skip_existing or not out.exists()):
             imwrite_bgr(out, hist_img)
             saved.append(out)
 
-    # Brown spots detection
     if "Brown" in params.types:
         brown_img, brown_percentage, brown_count = pipe.detect_brown_spots(
-            rgb, mask_img
+            masked_rgb, mask_img
         )
         filter_results["Brown"] = brown_img
         out = params.out_dir / names["Brown"]
@@ -544,10 +508,8 @@ def process_single_image(params: ProcessArgs) -> List[Path]:  # noqa: C901
             imwrite_bgr(out, brown_img)
             saved.append(out)
 
-    # Créer la mosaïque si nous avons des résultats de filtres
     if filter_results:
         # Extraire le numéro d'image du nom de fichier
-        import re
 
         match = re.search(r"image \((\d+)\)", params.img_path.stem)
         image_number = match.group(1) if match else params.img_path.stem
@@ -641,7 +603,6 @@ def main() -> None:  # noqa: C901
     types = build_types_filter(args.types)
     cfg = load_config(Path(args.config) if args.config else None)
 
-    # Single-image mode
     if args.image and not args.src and not args.dst:
         ip = Path(args.image)
         if not is_image(ip):
@@ -649,7 +610,6 @@ def main() -> None:  # noqa: C901
             return
 
         # Extract image number from filename (e.g., "image (100).JPG" -> "100")
-        import re
 
         match = re.search(r"image \((\d+)\)", ip.stem)
         if match:
@@ -681,7 +641,6 @@ def main() -> None:  # noqa: C901
             print(f"  - {s}")
         return
 
-    # Folder mode
     if args.src and args.dst:
         src = Path(args.src)
         dst = Path(args.dst)
@@ -729,7 +688,6 @@ def main() -> None:  # noqa: C901
                 )
         return
 
-    # No valid mode
     logging.error("Must specify either single image or --src/--dst for folder mode")
 
 
@@ -786,11 +744,9 @@ def transform_single_image_for_training(  # noqa: C901
             orig_uint8 = np.clip(resized, 0, 255).astype("uint8")
             return orig_uint8, x_float32
 
-    # If not provided, default to all transforms in optimal order
     if transform_types is None:
         transform_types = DEFAULT_TYPES
 
-    # Canonicalize + de-duplicate transforms while preserving order
     canonical: List[str] = []
     seen: set[str] = set()
     for t in transform_types:
@@ -807,10 +763,8 @@ def transform_single_image_for_training(  # noqa: C901
             log.info("Duplicate transform '%s' ignored for %s", name, img_path)
     transform_types = tuple(canonical)
 
-    # Global cache key for final output
     cache_key = (str(img_path), int(img_size), tuple(transform_types))
 
-    # Fast path: return from external cache
     if extern_cache is not None and cache_key in extern_cache:
         cached = extern_cache[cache_key]
         return cached[0], cached[1]
@@ -917,7 +871,6 @@ def transform_single_image_for_training(  # noqa: C901
         #   LEAF_SAVE_TRANSFORMS_DIR: output directory
         #       (default artifacts/sequence_previews)
         try:
-            import random
 
             save_flag = os.environ.get("LEAF_SAVE_TRANSFORMS", "0").lower() in {
                 "1",
@@ -1026,9 +979,7 @@ def _apply_light_augmentation(img: np.ndarray) -> np.ndarray:
     Returns:
         Image augmentée
     """
-    import random
 
-    # Probabilité d'appliquer chaque transformation
     if random.random() < 0.3:  # 30% de chance
         # Ajustement léger de la luminosité
         brightness_factor = random.uniform(0.8, 1.2)
@@ -1058,12 +1009,10 @@ def create_transform_function(
     Returns:
         Fonction de transformation utilisable avec ManifestSequence
     """
-    # Charger la configuration une seule fois
     cfg = None
     if config_path:
         cfg = load_config(Path(config_path))
 
-    # Internal cache shared across calls (keyed by (src, img_size, transforms))
     _internal_cache: Dict[Any, Any] = {}
 
     def transform_fn(

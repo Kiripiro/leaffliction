@@ -1,8 +1,3 @@
-"""
-Brown/Disease spots detection filter for image transformation pipeline.
-Detects and visualizes diseased areas in leaf tissue.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -14,7 +9,6 @@ import numpy as np
 try:
     from ..Transformation import TransformConfig
 except ImportError:
-    # Fallback for direct script execution
     import sys
     from pathlib import Path
 
@@ -27,17 +21,6 @@ except ImportError:
 def apply_brown_filter(
     rgb: np.ndarray, mask: Optional[np.ndarray], cfg: TransformConfig
 ) -> Tuple[np.ndarray, float, int]:
-    """
-    Detect brown/diseased areas in leaf.
-
-    Args:
-        rgb: Input RGB image
-        mask: Leaf mask
-        cfg: Transform configuration
-
-    Returns:
-        Tuple of (visualization, brown_percentage, brown_count)
-    """
     if mask is None:
         return rgb, 0.0, 0
 

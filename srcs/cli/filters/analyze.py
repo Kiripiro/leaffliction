@@ -1,8 +1,3 @@
-"""
-Analyze filter for image transformation pipeline.
-Performs shape analysis and creates visual overlays.
-"""
-
 from __future__ import annotations
 
 from typing import Optional
@@ -13,7 +8,6 @@ import numpy as np
 try:
     from ..Transformation import TransformConfig, draw_text
 except ImportError:
-    # Fallback for direct script execution
     import sys
     from pathlib import Path
 
@@ -29,18 +23,6 @@ def apply_analyze_filter(
     contour: Optional[np.ndarray],
     cfg: TransformConfig,
 ) -> np.ndarray:
-    """
-    Analyze leaf shape and create visual overlay.
-
-    Args:
-        rgb: Input RGB image
-        mask: Leaf mask
-        contour: Leaf contour
-        cfg: Transform configuration
-
-    Returns:
-        RGB image with analysis overlay
-    """
     from plantcv import plantcv as pcv  # type: ignore
 
     if contour is None or mask is None:

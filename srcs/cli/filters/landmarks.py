@@ -1,8 +1,3 @@
-"""
-Landmarks filter for image transformation pipeline.
-Places pseudolandmarks on leaf features including borders, veins, and disease spots.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -14,7 +9,6 @@ import numpy as np
 try:
     from ..Transformation import TransformConfig, draw_text, resample_contour
 except ImportError:
-    # Fallback for direct script execution
     import sys
     from pathlib import Path
 
@@ -25,7 +19,6 @@ except ImportError:
 
 
 def _create_enhanced_mask(rgb, cfg, mask_bool):
-    """Create enhanced mask that includes brown spots."""
     if cfg.use_lab_brown:
         lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)
         l, a, b = cv2.split(lab)
@@ -56,7 +49,7 @@ def _create_enhanced_mask(rgb, cfg, mask_bool):
 
 
 def _place_border_landmarks(vis, contour, border_quota):
-    """Place landmarks along the border."""
+
     COL_BORDER = (255, 0, 0)
     c_pts = resample_contour(contour, border_quota)
     for x, y in c_pts:
@@ -73,7 +66,7 @@ def _place_border_landmarks(vis, contour, border_quota):
 
 
 def _place_vein_landmarks(vis, rgb, mask_bool, vein_quota):
-    """Place landmarks on veins/edges inside leaf."""
+
     COL_VEIN = (0, 0, 255)
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
 
@@ -152,7 +145,7 @@ def _place_vein_landmarks(vis, rgb, mask_bool, vein_quota):
 
 
 def _place_disease_landmarks(vis, rgb, cfg, mask_bool, disease_quota):
-    """Place landmarks on diseased/brown areas."""
+
     COL_DISEASE = (139, 69, 19)
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     disease_placed = 0
@@ -262,7 +255,7 @@ def apply_landmarks_filter(
     cfg: TransformConfig,
     make_mask_func: callable,
 ) -> np.ndarray:
-    """Place pseudolandmarks on leaf features."""
+
     if contour is None:
         return draw_text(rgb, "Landmarks: no object")
 

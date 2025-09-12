@@ -1,95 +1,49 @@
-# PlantCV Transformation config — robust defaults
-# This file makes the CLI deterministic and tunable without touching the code.
-# You can adjust thresholds here for different species, lighting, and backgrounds.
-
-# --- General ---
-# Gaussian blur sigma used in the Blur step (fallback)
+# PlantCV Transformation Configuration
 gaussian_sigma: 1.5
-
-# ROI output size (H, W)
 roi_size: [256, 256]
-
-# Total number of pseudo-landmarks to place (border/veins/anomalies balanced)
 landmarks_count: 80
 
-# --- Masking (segmentation) ---
-# Strategy: auto | hsv_s | hsv_v_dark | hsv_h | lab | kmeans
-# Changed to hsv_h for better color-based leaf detection
-mask_strategy: hsv_h
-
-# Background bias helps k-means pick the correct cluster:
-#   light_bg for bright backgrounds, dark_bg for dark backgrounds, or leave null
+# Masking strategy: inclusive captures entire plant including diseased areas
+mask_strategy: inclusive
 bg_bias: light_bg
-
-# Refine the best mask with GrabCut (2 iterations) for better edge refinement
 grabcut_refine: true
+green_hue_range: [25, 100]
+min_object_area_ratio: 0.10
+max_object_area_ratio: 0.98
+fill_size: 1000
+morph_kernel: 3
+mask_upscale_factor: 1.3
+mask_upscale_long_side: 1500
 
-# Extended hue range for diseased leaves (yellow, brown, red spots)
-# Covers green healthy leaves + diseased variations
-green_hue_range: [15, 110]
-
-# Relaxed object size bounds for better leaf capture
-# Allows smaller diseased areas and larger leaf+stem combinations
-min_object_area_ratio: 0.15
-max_object_area_ratio: 0.95
-
-# Increased fill size for diseased leaves with holes/spots
-fill_size: 800
-
-# Larger morphological kernel for better leaf boundary cleaning
-morph_kernel: 5
-
-# Enhanced upscaling for better edge detection on small images
-mask_upscale_factor: 1.2
-mask_upscale_long_side: 1400
-
-# --- Shadow suppression ---
-# Remove low-V, low-S, non-green pixels from the mask candidate and re-score
-shadow_suppression: true
-
-# Max saturation to consider a pixel as shadow when V is low
-shadow_s_max: 80  # Very aggressive - remove even moderately saturated dark areas
-
-# How to pick the V threshold: otsu | percentile
+# Shadow handling
+shadow_suppression: false
+shadow_s_max: 40
 shadow_v_method: percentile
-shadow_v_percentile: 15  # Extremely aggressive - remove bottom 15% of brightness
-
-# Additional shadow removal parameters for better detection
+shadow_v_percentile: 5
 shadow_min_green_fraction: 0.3
 shadow_morphology_kernel: 3
 
-# --- Disease-specific optimizations ---
-# Enable adaptive thresholding for varying lighting conditions
+# Disease detection optimizations
 adaptive_threshold: true
 adaptive_block_size: 11
 adaptive_c_constant: 2
-
-# Multi-scale analysis for better edge detection
 edge_detection_scales: [0.8, 1.0, 1.2]
 edge_sigma_ratio: 0.5
-
-# Color space combinations for robust detection
 color_spaces: ["hsv", "lab", "yuv"]
 combine_masks: true
-
-# Noise reduction parameters
 noise_reduction: true
 bilateral_d: 9
 bilateral_sigma_color: 75
 bilateral_sigma_space: 75
-
-# Legacy option used by the fallback simple pipeline
 hsv_channel_for_mask: s
 
-# --- Brown/Disease Detection ---
-# Brown spot detection parameters
-use_lab_brown: false  # Use HSV instead of LAB for brown detection
-brown_hue_range: [0, 30]  # Wider brown/orange hue range in HSV
-brown_s_min: 20  # Lower minimum saturation for brown regions
-brown_v_max: 200  # Higher maximum value (brightness) for brown regions
-brown_min_area_px: 25  # Lower minimum area in pixels for a brown region
-brown_morph_kernel: 3  # Morphological kernel size for brown region cleaning
-
-# LAB color space brown detection (alternative)
-lab_a_min: 125  # Lower minimum A channel value (green to red axis)
-lab_b_min: 125  # Lower minimum B channel value (blue to yellow axis)
+# Brown/disease spot detection
+use_lab_brown: false
+brown_hue_range: [0, 30]
+brown_s_min: 20
+brown_v_max: 200
+brown_min_area_px: 25
+brown_morph_kernel: 3
+lab_a_min: 125
+lab_b_min: 125
+debug_shadow_visualization: false

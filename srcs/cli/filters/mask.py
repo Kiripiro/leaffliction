@@ -1,8 +1,3 @@
-"""
-Mask filter for image transformation pipeline.
-Creates robust leaf masks using various strategies.
-"""
-
 from __future__ import annotations
 
 from typing import List, Optional, Tuple
@@ -14,7 +9,6 @@ from plantcv import plantcv as pcv
 try:
     from ..Transformation import TransformConfig, contour_to_mask, largest_contour
 except ImportError:
-    # Fallback for direct script execution
     import sys
     from pathlib import Path
 
@@ -27,7 +21,6 @@ except ImportError:
 def _prepare_working_image(
     rgb: np.ndarray, cfg: TransformConfig
 ) -> Tuple[np.ndarray, float]:
-    """Prepare working image with optional upscaling."""
     oh, ow = rgb.shape[:2]
     s = 1.0
     if cfg.mask_upscale_factor and cfg.mask_upscale_factor > 1.0:
@@ -52,7 +45,7 @@ def _prepare_working_image(
 def _postprocess_mask(
     bin_img: np.ndarray, cfg: TransformConfig
 ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-    """Apply standard post-processing to binary mask."""
+
     # Ensure binary uint8
     b = (bin_img > 0).astype(np.uint8) * 255
     filled = pcv.fill(bin_img=b, size=cfg.fill_size)
@@ -71,7 +64,6 @@ def _postprocess_mask(
 def _create_hsv_masks(
     rgb_work: np.ndarray, cfg: TransformConfig, bias: str
 ) -> List[Tuple[str, np.ndarray]]:
-    """Create HSV-based masks."""
 
     def mask_hsv_s(object_type: str = "light"):
         g = pcv.rgb2gray_hsv(rgb_img=rgb_work, channel="s")
@@ -99,7 +91,7 @@ def _create_hsv_masks(
 
 
 def _create_lab_mask(rgb_work: np.ndarray) -> np.ndarray:
-    """Create LAB-based mask."""
+
     lab = cv2.cvtColor(rgb_work, cv2.COLOR_RGB2LAB)
     L, a, b = cv2.split(lab)
     m = ((a <= 135) & (b >= 115) & (b <= 170)).astype(np.uint8) * 255
@@ -107,7 +99,7 @@ def _create_lab_mask(rgb_work: np.ndarray) -> np.ndarray:
 
 
 def _create_kmeans_mask(rgb_work: np.ndarray, cfg: TransformConfig) -> np.ndarray:
-    """Create K-means based mask."""
+
     cv2.setRNGSeed(12345)
     h, w = rgb_work.shape[:2]
     scale = 256 / max(h, w)
@@ -146,7 +138,7 @@ def _score_mask(
     rgb_work: np.ndarray,
     cfg: TransformConfig,
 ) -> float:
-    """Score mask quality."""
+
     if cnt is None:
         return -1.0
     h, w = mask_bin.shape[:2]
@@ -191,7 +183,7 @@ def _score_mask(
 def _suppress_shadow(
     mask_bin: np.ndarray, rgb_work: np.ndarray, cfg: TransformConfig
 ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-    """Apply aggressive shadow suppression."""
+
     # ULTRA-AGGRESSIVE shadow suppression - remove ALL dark regions
     hsv = cv2.cvtColor(rgb_work, cv2.COLOR_RGB2HSV)
     Hc, Sc, Vc = cv2.split(hsv)
@@ -307,7 +299,7 @@ def _suppress_shadow(
 def _apply_grabcut_refinement(
     best_mask: np.ndarray, rgb_work: np.ndarray, cfg: TransformConfig
 ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-    """Apply GrabCut refinement to mask."""
+
     try:
         h, w = best_mask.shape[:2]
         gc_mask = np.zeros((h, w), np.uint8)
@@ -335,7 +327,7 @@ def _apply_grabcut_refinement(
 def _extend_mask_with_brown_regions(
     best_mask: np.ndarray, rgb_work: np.ndarray, cfg: TransformConfig
 ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-    """Extend mask to include brown/diseased areas."""
+
     # Create a dilated mask to define the search area for brown regions
     search_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (20, 20))
     search_area = cv2.dilate(best_mask, search_kernel, iterations=2)
@@ -395,7 +387,7 @@ def _extend_mask_with_brown_regions(
 def _create_fallback_mask(
     rgb_work: np.ndarray, cfg: TransformConfig
 ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-    """Create fallback mask using legacy simple pipeline."""
+
     gray = pcv.rgb2gray_hsv(rgb_img=rgb_work, channel=cfg.hsv_channel_for_mask)
     th = pcv.threshold.otsu(gray_img=gray, object_type="light")
     filled = pcv.fill(bin_img=th, size=cfg.fill_size)
@@ -414,7 +406,7 @@ def _create_fallback_mask(
 def _build_mask_candidates(
     rgb_work: np.ndarray, cfg: TransformConfig
 ) -> List[Tuple[str, np.ndarray]]:
-    """Build list of candidate masks based on strategy."""
+
     candidates: List[Tuple[str, np.ndarray]] = []
     bias = (cfg.bg_bias or "auto").lower()
 
@@ -428,11 +420,17 @@ def _build_mask_candidates(
         candidates.append(("lab", _create_lab_mask(rgb_work)))
     elif cfg.mask_strategy == "kmeans":
         candidates.append(("kmeans", _create_kmeans_mask(rgb_work, cfg)))
+    elif cfg.mask_strategy == "enhanced":
+        candidates.append(("enhanced", _create_enhanced_mask(rgb_work, cfg)))
+    elif cfg.mask_strategy == "inclusive":
+        candidates.append(("inclusive", _create_inclusive_mask(rgb_work, cfg)))
     else:
-        # Auto mode: try all strategies
+        # Auto mode: try all strategies including enhanced
         candidates.extend(_create_hsv_masks(rgb_work, cfg, bias))
         candidates.append(("lab", _create_lab_mask(rgb_work)))
         candidates.append(("kmeans", _create_kmeans_mask(rgb_work, cfg)))
+        candidates.append(("enhanced", _create_enhanced_mask(rgb_work, cfg)))
+        candidates.append(("inclusive", _create_inclusive_mask(rgb_work, cfg)))
 
     return candidates
 
@@ -440,7 +438,7 @@ def _build_mask_candidates(
 def _find_best_mask(
     candidates: List[Tuple[str, np.ndarray]], rgb_work: np.ndarray, cfg: TransformConfig
 ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], float]:
-    """Find the best mask among candidates."""
+
     best_mask = None
     best_cnt = None
     best_score = -1.0
@@ -462,7 +460,7 @@ def _apply_refinements(
     rgb_work: np.ndarray,
     cfg: TransformConfig,
 ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
-    """Apply shadow suppression and GrabCut refinements."""
+
     current_mask, current_cnt, current_score = best_mask, best_cnt, best_score
 
     # Shadow suppression refinement
@@ -494,7 +492,7 @@ def _handle_fallback_and_extension(
     ow: int,
     oh: int,
 ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
-    """Handle fallback mask creation and brown region extension."""
+
     current_mask, current_cnt = best_mask, best_cnt
 
     # Create fallback if no mask found
@@ -524,7 +522,7 @@ def _resize_results_to_original(
     ow: int,
     oh: int,
 ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
-    """Resize mask and contour back to original image dimensions."""
+
     if abs(scale_factor - 1.0) < 1e-6:
         return mask, cnt
 
@@ -580,7 +578,7 @@ def apply_mask_filter(
     rgb: np.ndarray, cfg: TransformConfig, make_mask_func: callable
 ) -> np.ndarray:
     """
-    Apply mask to RGB image, showing only the leaf area.
+    Apply mask to RGB image, showing only the leaf area with black background.
 
     Args:
         rgb: Input RGB image
@@ -588,18 +586,248 @@ def apply_mask_filter(
         make_mask_func: Function to create leaf mask
 
     Returns:
-        Masked RGB image
+        Masked RGB image with explicit black background
     """
     mask_img, _ = make_mask_func(rgb)
 
     if mask_img is not None:
-        # Apply mask to RGB
-        # Build a 2D boolean mask, then broadcast to 3 channels via multiplication
+        # Create explicit black background
+        h, w = rgb.shape[:2]
+        masked_rgb = np.zeros((h, w, 3), dtype=rgb.dtype)
+
+        # Build a 2D boolean mask
         if mask_img.ndim == 2:
             m2 = mask_img > 0
         else:
             m2 = mask_img[..., 0] > 0
-        masked_rgb = (rgb * m2[..., None]).astype(rgb.dtype)
+
+        # Apply mask: copy RGB values where mask is True, keep black elsewhere
+        masked_rgb[m2] = rgb[m2]
+
         return masked_rgb
     else:
         return rgb
+
+
+def _create_enhanced_mask(rgb_work: np.ndarray, cfg: TransformConfig) -> np.ndarray:
+    """
+    Create enhanced mask that properly isolates the entire plant from background.
+
+    This improved method:
+    1. Uses more inclusive color space thresholds to capture all plant tissue
+    2. Combines multiple approaches with OR logic instead of AND
+    3. Includes brown/diseased areas as part of the plant
+    4. Better handles shadows and variations in lighting
+    """
+    h, w = rgb_work.shape[:2]
+
+    # Convert to multiple color spaces
+    hsv = cv2.cvtColor(rgb_work, cv2.COLOR_RGB2HSV)
+    lab = cv2.cvtColor(rgb_work, cv2.COLOR_RGB2LAB)
+
+    # 1. More inclusive HSV-based vegetation detection
+    h_chan, s_chan, v_chan = cv2.split(hsv)
+    lo, hi = cfg.green_hue_range
+
+    # More inclusive hue range - capture green and yellowish areas
+    hue_mask = ((h_chan >= lo) & (h_chan <= hi)).astype(np.uint8)
+
+    # Lower saturation threshold to include less vivid plant areas
+    sat_mask = (s_chan >= 25).astype(np.uint8)  # Reduced from 80 to 25
+
+    # More inclusive brightness range to capture shadows and highlights
+    val_mask = ((v_chan >= 20) & (v_chan <= 240)).astype(np.uint8)  # More inclusive
+
+    # Combine HSV conditions with AND
+    hsv_vegetation = hue_mask & sat_mask & val_mask
+
+    # 2. LAB-based vegetation detection (more inclusive)
+    l_chan, a_chan, b_chan = cv2.split(lab)
+
+    # More inclusive LAB detection to capture all plant tissue
+    lab_vegetation = (
+        (a_chan <= 135)  # Relaxed from 125 to 135
+        & (b_chan >= 105)  # Relaxed from 115 to 105
+        & (l_chan >= 30)  # Relaxed from 50 to 30
+        & (l_chan <= 220)  # More inclusive brightness
+    ).astype(np.uint8)
+
+    # 3. Brown/diseased area detection to include in plant mask
+    brown_areas = np.zeros_like(h_chan, dtype=np.uint8)
+
+    if cfg.use_lab_brown:
+        # LAB-based brown detection
+        brown_areas = (
+            (a_chan >= cfg.lab_a_min - 10)  # Slightly more inclusive
+            & (b_chan >= cfg.lab_b_min - 10)
+            & (l_chan >= 20)  # Include darker brown areas
+        ).astype(np.uint8)
+    else:
+        # HSV-based brown detection with expanded range
+        lo_brown, hi_brown = cfg.brown_hue_range
+        # Expand brown range to include more yellow-brown variations
+        brown_hue1 = (h_chan >= lo_brown) & (h_chan <= hi_brown + 20)
+        brown_hue2 = (h_chan >= 160) & (h_chan <= 180)  # Red-brown range
+        brown_areas = (
+            (brown_hue1 | brown_hue2)
+            & (s_chan >= cfg.brown_s_min - 10)  # More inclusive
+            & (v_chan <= cfg.brown_v_max + 30)  # Include lighter brown areas
+        ).astype(np.uint8)
+
+    # 4. Edge-based detection for plant boundaries
+    gray = cv2.cvtColor(rgb_work, cv2.COLOR_RGB2GRAY)
+
+    # Multi-scale edge detection
+    edges1 = cv2.Canny(gray, 30, 100)  # Lower thresholds for more edges
+    edges2 = cv2.Canny(gray, 50, 150)
+    edges_combined = cv2.bitwise_or(edges1, edges2)
+
+    # Dilate edges to create broader edge regions
+    edge_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    edge_regions = cv2.dilate(edges_combined, edge_kernel, iterations=2)
+
+    # 5. Combine all vegetation indicators with OR logic (more inclusive)
+    vegetation_mask = hsv_vegetation | lab_vegetation | brown_areas
+
+    # Add edge information to capture plant boundaries
+    edge_enhanced = vegetation_mask.astype(np.float32)
+    edge_enhanced += (edge_regions.astype(np.float32) / 255.0) * 0.3
+
+    # Lower threshold for more inclusive mask
+    enhanced_mask = (edge_enhanced > 0.3).astype(np.uint8) * 255
+
+    # 6. Morphological operations to clean and connect plant regions
+    # Fill small holes first
+    fill_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    enhanced_mask = cv2.morphologyEx(enhanced_mask, cv2.MORPH_CLOSE, fill_kernel)
+
+    # Remove very small noise
+    noise_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    enhanced_mask = cv2.morphologyEx(enhanced_mask, cv2.MORPH_OPEN, noise_kernel)
+
+    # Connect nearby plant regions
+    connect_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+    enhanced_mask = cv2.morphologyEx(enhanced_mask, cv2.MORPH_CLOSE, connect_kernel)
+
+    # 7. Keep largest connected component (the main plant)
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        enhanced_mask, connectivity=8
+    )
+
+    if num_labels > 1:
+        # Find the largest component
+        largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+        enhanced_mask = (labels == largest_label).astype(np.uint8) * 255
+
+    # 8. Final smoothing to create clean boundaries
+    smooth_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    enhanced_mask = cv2.morphologyEx(enhanced_mask, cv2.MORPH_CLOSE, smooth_kernel)
+
+    return enhanced_mask
+
+
+def _create_inclusive_mask(rgb_work: np.ndarray, cfg: TransformConfig) -> np.ndarray:
+    """
+    Create highly effective mask to isolate leaf from gray/purple backgrounds.
+
+    Focus on strong green detection and aggressive background removal.
+    """
+    h, w = rgb_work.shape[:2]
+
+    # Convert to multiple color spaces
+    hsv = cv2.cvtColor(rgb_work, cv2.COLOR_RGB2HSV)
+    lab = cv2.cvtColor(rgb_work, cv2.COLOR_RGB2LAB)
+
+    h_chan, s_chan, v_chan = cv2.split(hsv)
+    l_chan, a_chan, b_chan = cv2.split(lab)
+    r_chan, g_chan, b_chan_rgb = cv2.split(rgb_work)
+
+    # Strategy 1: Strong green detection in HSV
+    lo, hi = cfg.green_hue_range
+    # Expand green range slightly to catch all green variations
+    expanded_lo = max(0, lo - 10)
+    expanded_hi = min(179, hi + 15)
+
+    green_hue = (h_chan >= expanded_lo) & (h_chan <= expanded_hi)
+    strong_green = (green_hue & (s_chan >= 30) & (v_chan >= 30)).astype(np.uint8)
+
+    # Strategy 2: Green channel dominance (very effective for leaves)
+    green_dominant = (
+        (g_chan > r_chan + 15)
+        | (g_chan > b_chan_rgb + 15)
+        | ((g_chan > r_chan + 5) & (g_chan > b_chan_rgb + 5) & (s_chan >= 20))
+    ).astype(np.uint8)
+
+    # Strategy 3: LAB green detection (robust to lighting)
+    lab_green = (
+        (a_chan <= 125)
+        & (b_chan >= 120)  # Green-yellow in LAB
+        & (l_chan >= 20)
+        & (l_chan <= 240)  # Reasonable brightness
+    ).astype(np.uint8)
+
+    # Strategy 4: Aggressive background removal
+    # Detect gray/purple backgrounds typical in plant images
+    gray = cv2.cvtColor(rgb_work, cv2.COLOR_RGB2GRAY)
+    blur_gray = cv2.GaussianBlur(gray, (15, 15), 0)
+    texture_diff = cv2.absdiff(gray, blur_gray)
+
+    gray_purple_bg = (
+        # Gray backgrounds (low saturation)
+        ((s_chan <= 25) & (v_chan >= 50) & (v_chan <= 220))
+        # Purple/violet backgrounds (specific hue range)
+        | (
+            (h_chan >= 120)
+            & (h_chan <= 160)
+            & (s_chan >= 20)
+            & (r_chan > g_chan)
+            & (b_chan_rgb > g_chan)
+        )
+        # Very uniform areas (no texture)
+        | ((s_chan <= 15) & (texture_diff < 10))
+    ).astype(np.uint8)
+
+    # Strategy 5: Edge-enhanced detection
+    edges = cv2.Canny(gray, 30, 100)
+    edge_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    dilated_edges = cv2.dilate(edges, edge_kernel)
+
+    # Combine all positive indicators
+    plant_candidates = (
+        strong_green | green_dominant | lab_green | (dilated_edges > 0)
+    ).astype(np.uint8)
+
+    # Remove background explicitly
+    plant_mask = plant_candidates & (~gray_purple_bg.astype(bool)).astype(np.uint8)
+
+    # Convert to full intensity
+    plant_mask = plant_mask * 255
+
+    # Morphological cleaning - aggressive to get clean boundaries
+    # Remove small noise first
+    noise_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    plant_mask = cv2.morphologyEx(plant_mask, cv2.MORPH_OPEN, noise_kernel)
+
+    # Fill gaps in the leaf
+    fill_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+    plant_mask = cv2.morphologyEx(plant_mask, cv2.MORPH_CLOSE, fill_kernel)
+
+    # Final connection of nearby regions
+    connect_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    plant_mask = cv2.morphologyEx(plant_mask, cv2.MORPH_CLOSE, connect_kernel)
+
+    # Keep only the largest connected component (main leaf)
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        plant_mask, connectivity=8
+    )
+
+    if num_labels > 1:
+        # Find the largest component
+        largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+        plant_mask = (labels == largest_label).astype(np.uint8) * 255
+
+    # Final boundary smoothing
+    smooth_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    plant_mask = cv2.morphologyEx(plant_mask, cv2.MORPH_CLOSE, smooth_kernel)
+
+    return plant_mask

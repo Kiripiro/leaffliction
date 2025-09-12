@@ -1,8 +1,3 @@
-"""
-ROI (Region of Interest) filter for image transformation pipeline.
-Extracts and standardizes the leaf region.
-"""
-
 from __future__ import annotations
 
 from typing import Optional, Tuple
@@ -13,7 +8,6 @@ import numpy as np
 try:
     from ..Transformation import TransformConfig
 except ImportError:
-    # Fallback for direct script execution
     import sys
     from pathlib import Path
 
@@ -26,17 +20,6 @@ except ImportError:
 def apply_roi_filter(
     rgb: np.ndarray, contour: Optional[np.ndarray], cfg: TransformConfig
 ) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[Tuple[int, int, int, int]]]:
-    """
-    Extract ROI (Region of Interest) from the image based on contour.
-
-    Args:
-        rgb: Input RGB image
-        contour: Leaf contour
-        cfg: Transform configuration
-
-    Returns:
-        Tuple of (roi_image, visualization, bounding_box)
-    """
     if contour is None:
         return rgb, None, None
 
