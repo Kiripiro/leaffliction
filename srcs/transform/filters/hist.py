@@ -36,16 +36,16 @@ def _analyze_color_regions(
     color_analysis = {}
 
     healthy_green = mask & (h >= 35) & (h <= 85) & (s >= 40) & (v >= 30)
-    color_analysis["Vert Sain"] = (np.sum(healthy_green) / total_pixels) * 100
+    color_analysis["Healthy Green"] = (np.sum(healthy_green) / total_pixels) * 100
 
     yellowish_green = mask & (h >= 20) & (h <= 40) & (s >= 25) & (v >= 30)
-    color_analysis["Vert Jaunâtre"] = (np.sum(yellowish_green) / total_pixels) * 100
+    color_analysis["Yellowish Green"] = (np.sum(yellowish_green) / total_pixels) * 100
 
     yellow = mask & (h >= 15) & (h <= 35) & (s >= 50) & (v >= 50)
-    color_analysis["Jaune"] = (np.sum(yellow) / total_pixels) * 100
+    color_analysis["Yellow"] = (np.sum(yellow) / total_pixels) * 100
 
     brown_orange = mask & (((h >= 0) & (h <= 25)) | (h >= 160)) & (s >= 30) & (v >= 20)
-    color_analysis["Brun/Orange"] = (np.sum(brown_orange) / total_pixels) * 100
+    color_analysis["Brown/Orange"] = (np.sum(brown_orange) / total_pixels) * 100
 
     red_spots = (
         mask
@@ -53,16 +53,16 @@ def _analyze_color_regions(
         & (s >= 40)
         & (v >= 30)
     )
-    color_analysis["Rouge"] = (np.sum(red_spots) / total_pixels) * 100
+    color_analysis["Red"] = (np.sum(red_spots) / total_pixels) * 100
 
     dark_areas = mask & (v <= 50) & (s >= 20)
-    color_analysis["Zones Sombres"] = (np.sum(dark_areas) / total_pixels) * 100
+    color_analysis["Dark Areas"] = (np.sum(dark_areas) / total_pixels) * 100
 
     bright_areas = mask & (v >= 200) & (s <= 30)
-    color_analysis["Zones Claires"] = (np.sum(bright_areas) / total_pixels) * 100
+    color_analysis["Bright Areas"] = (np.sum(bright_areas) / total_pixels) * 100
 
     purple_areas = mask & (h >= 120) & (h <= 160) & (s >= 20)
-    color_analysis["Violet/Pourpre"] = (np.sum(purple_areas) / total_pixels) * 100
+    color_analysis["Purple"] = (np.sum(purple_areas) / total_pixels) * 100
 
     return color_analysis
 
@@ -74,13 +74,13 @@ def _create_color_distribution_plot(color_analysis: Dict[str, float], ax) -> Non
         ax.text(
             0.5,
             0.5,
-            "Aucune couleur\nsignificative détectée",
+            "No significant\ncolors detected",
             ha="center",
             va="center",
             transform=ax.transAxes,
             fontsize=12,
         )
-        ax.set_title("Distribution des Couleurs")
+        ax.set_title("Color Distribution")
         return
 
     colors = list(significant_colors.keys())
@@ -88,21 +88,21 @@ def _create_color_distribution_plot(color_analysis: Dict[str, float], ax) -> Non
 
     bar_colors = []
     for color_name in colors:
-        if "Vert Sain" in color_name:
+        if "Healthy Green" in color_name:
             bar_colors.append("#2E7D32")
-        elif "Jaunâtre" in color_name:
+        elif "Yellowish" in color_name:
             bar_colors.append("#7CB342")
-        elif "Jaune" in color_name:
+        elif "Yellow" in color_name:
             bar_colors.append("#FBC02D")
-        elif "Brun" in color_name or "Orange" in color_name:
+        elif "Brown" in color_name or "Orange" in color_name:
             bar_colors.append("#FF6F00")
-        elif "Rouge" in color_name:
+        elif "Red" in color_name:
             bar_colors.append("#D32F2F")
-        elif "Sombres" in color_name:
+        elif "Dark" in color_name:
             bar_colors.append("#424242")
-        elif "Claires" in color_name:
+        elif "Bright" in color_name:
             bar_colors.append("#E0E0E0")
-        elif "Violet" in color_name or "Pourpre" in color_name:
+        elif "Purple" in color_name:
             bar_colors.append("#7B1FA2")
         else:
             bar_colors.append("#90A4AE")
@@ -128,9 +128,9 @@ def _create_color_distribution_plot(color_analysis: Dict[str, float], ax) -> Non
             weight="bold",
         )
 
-    ax.set_xlabel("Types de Couleurs")
-    ax.set_ylabel("Pourcentage (%)")
-    ax.set_title("Distribution des Couleurs Détectées")
+    ax.set_xlabel("Color Types")
+    ax.set_ylabel("Percentage (%)")
+    ax.set_title("Detected Color Distribution")
     ax.set_xticks(range(len(colors)))
     ax.set_xticklabels(colors, rotation=45, ha="right", fontsize=8)
     ax.grid(axis="y", alpha=0.3)
@@ -152,9 +152,7 @@ def _create_enhanced_hsv_plot(hsv: np.ndarray, mask: np.ndarray, ax) -> None:
 
     bins = 60
 
-    ax.hist(
-        h_masked, bins=bins, color="red", alpha=0.6, label="Teinte (H)", density=True
-    )
+    ax.hist(h_masked, bins=bins, color="red", alpha=0.6, label="Hue (H)", density=True)
     ax.hist(
         s_masked,
         bins=bins,
@@ -164,16 +162,16 @@ def _create_enhanced_hsv_plot(hsv: np.ndarray, mask: np.ndarray, ax) -> None:
         density=True,
     )
     ax.hist(
-        v_masked, bins=bins, color="blue", alpha=0.6, label="Valeur (V)", density=True
+        v_masked, bins=bins, color="blue", alpha=0.6, label="Value (V)", density=True
     )
 
-    ax.axvline(x=35, color="darkgreen", linestyle="--", alpha=0.7, label="Vert début")
-    ax.axvline(x=85, color="darkgreen", linestyle="--", alpha=0.7, label="Vert fin")
-    ax.axvline(x=15, color="orange", linestyle=":", alpha=0.7, label="Jaune/Brun")
+    ax.axvline(x=35, color="darkgreen", linestyle="--", alpha=0.7, label="Green start")
+    ax.axvline(x=85, color="darkgreen", linestyle="--", alpha=0.7, label="Green end")
+    ax.axvline(x=15, color="orange", linestyle=":", alpha=0.7, label="Yellow/Brown")
 
-    ax.set_xlabel("Valeur")
-    ax.set_ylabel("Densité")
-    ax.set_title("Histogramme HSV Amélioré")
+    ax.set_xlabel("Value")
+    ax.set_ylabel("Density")
+    ax.set_title("Enhanced HSV Histogram")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 
@@ -199,9 +197,9 @@ def apply_histogram_filter(rgb: np.ndarray, cfg: TransformConfig) -> np.ndarray:
     ax3 = plt.subplot(2, 2, 3)
     ax3.axis("off")
 
-    summary_lines = ["ANALYSE DES COULEURS:", ""]
+    summary_lines = ["COLOR ANALYSIS:", ""]
     total_analyzed = np.sum(leaf_mask)
-    summary_lines.append(f"Pixels analysés: {total_analyzed:,}")
+    summary_lines.append(f"Analyzed pixels: {total_analyzed:,}")
     summary_lines.append("")
 
     sorted_colors = sorted(color_analysis.items(), key=lambda x: x[1], reverse=True)
@@ -211,25 +209,25 @@ def apply_histogram_filter(rgb: np.ndarray, cfg: TransformConfig) -> np.ndarray:
             summary_lines.append(f"• {color_name}: {percentage:.1f}%")
 
     summary_lines.append("")
-    healthy_total = color_analysis.get("Vert Sain", 0) + color_analysis.get(
-        "Vert Jaunâtre", 0
+    healthy_total = color_analysis.get("Healthy Green", 0) + color_analysis.get(
+        "Yellowish Green", 0
     )
     disease_total = (
-        color_analysis.get("Brun/Orange", 0)
-        + color_analysis.get("Rouge", 0)
-        + color_analysis.get("Jaune", 0)
+        color_analysis.get("Brown/Orange", 0)
+        + color_analysis.get("Red", 0)
+        + color_analysis.get("Yellow", 0)
     )
 
     if healthy_total > 50:
-        health_status = "Feuillage majoritairement sain"
+        health_status = "Mostly healthy foliage"
     elif disease_total > 30:
-        health_status = "Signes significatifs de maladie"
-    elif color_analysis.get("Jaune", 0) > 20:
-        health_status = "Possible jaunissement/stress"
+        health_status = "Significant disease signs"
+    elif color_analysis.get("Yellow", 0) > 20:
+        health_status = "Possible yellowing/stress"
     else:
-        health_status = "État mixte ou indéterminé"
+        health_status = "Mixed or undetermined state"
 
-    summary_lines.append(f"ÉTAT: {health_status}")
+    summary_lines.append(f"STATUS: {health_status}")
 
     summary_text = "\n".join(summary_lines)
     ax3.text(
@@ -246,13 +244,13 @@ def apply_histogram_filter(rgb: np.ndarray, cfg: TransformConfig) -> np.ndarray:
     ax4 = plt.subplot(2, 2, 4)
 
     hue_ranges = {
-        "Vert (35-85°)": np.sum(leaf_mask & (h >= 35) & (h <= 85)),
-        "Jaune/Orange (15-35°)": np.sum(leaf_mask & (h >= 15) & (h <= 35)),
-        "Rouge (0-15° & 160-180°)": np.sum(
+        "Green (35-85°)": np.sum(leaf_mask & (h >= 35) & (h <= 85)),
+        "Yellow/Orange (15-35°)": np.sum(leaf_mask & (h >= 15) & (h <= 35)),
+        "Red (0-15° & 160-180°)": np.sum(
             leaf_mask & (((h >= 0) & (h <= 15)) | (h >= 160))
         ),
-        "Violet (120-160°)": np.sum(leaf_mask & (h >= 120) & (h <= 160)),
-        "Autres": np.sum(leaf_mask & (((h > 85) & (h < 120)) | ((h > 35) & (h < 15)))),
+        "Purple (120-160°)": np.sum(leaf_mask & (h >= 120) & (h <= 160)),
+        "Others": np.sum(leaf_mask & (((h > 85) & (h < 120)) | ((h > 35) & (h < 15)))),
     }
 
     total_hue_pixels = sum(hue_ranges.values())
@@ -270,7 +268,7 @@ def apply_histogram_filter(rgb: np.ndarray, cfg: TransformConfig) -> np.ndarray:
                 autopct="%1.1f%%",
                 startangle=90,
             )
-            ax4.set_title("Répartition par Teinte")
+            ax4.set_title("Distribution by Hue")
 
             for autotext in autotexts:
                 autotext.set_color("white")
@@ -280,12 +278,12 @@ def apply_histogram_filter(rgb: np.ndarray, cfg: TransformConfig) -> np.ndarray:
             ax4.text(
                 0.5,
                 0.5,
-                "Données insuffisantes\npour l'analyse",
+                "Insufficient data\nfor analysis",
                 ha="center",
                 va="center",
                 transform=ax4.transAxes,
             )
-            ax4.set_title("Répartition par Teinte")
+            ax4.set_title("Distribution by Hue")
 
     plt.tight_layout()
 
