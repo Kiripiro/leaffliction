@@ -37,6 +37,8 @@ def _default_config():
         use_lab_brown=False,
         lab_b_min=135,
         lab_a_min=140,
+        shadow_morphology_kernel=3,
+        debug_shadow_visualization=False,
     )
 
 

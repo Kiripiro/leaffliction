@@ -578,7 +578,7 @@ def apply_mask_filter(
     rgb: np.ndarray, cfg: TransformConfig, make_mask_func: callable
 ) -> np.ndarray:
     """
-    Apply mask to RGB image, showing only the leaf area with black background.
+    Apply mask to RGB image using PlantCV-style masking with black background.
 
     Args:
         rgb: Input RGB image
@@ -586,25 +586,15 @@ def apply_mask_filter(
         make_mask_func: Function to create leaf mask
 
     Returns:
-        Masked RGB image with explicit black background
+        Masked RGB image with black background (PlantCV style)
     """
     mask_img, _ = make_mask_func(rgb)
 
     if mask_img is not None:
-        # Create explicit black background
-        h, w = rgb.shape[:2]
-        masked_rgb = np.zeros((h, w, 3), dtype=rgb.dtype)
+        # Use the new PlantCV-style apply_mask function with black background
+        from srcs.utils.mask_utils import apply_mask
 
-        # Build a 2D boolean mask
-        if mask_img.ndim == 2:
-            m2 = mask_img > 0
-        else:
-            m2 = mask_img[..., 0] > 0
-
-        # Apply mask: copy RGB values where mask is True, keep black elsewhere
-        masked_rgb[m2] = rgb[m2]
-
-        return masked_rgb
+        return apply_mask(rgb, mask_img, mask_color="black")
     else:
         return rgb
 

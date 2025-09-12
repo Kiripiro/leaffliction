@@ -341,18 +341,28 @@ class TransformPipeline:
         return make_mask(rgb, self.cfg)
 
     def create_masked_rgb(self, rgb, mask):
+        """Create masked RGB image using PlantCV-style masking."""
         if mask is None:
             return rgb
 
-        if mask.ndim == 2:
-            binary_mask = mask > 0
-        else:
-            binary_mask = mask[..., 0] > 0
+        from srcs.utils.mask_utils import apply_mask
 
-        masked_rgb = rgb.copy()
-        masked_rgb[~binary_mask] = [255, 255, 255]
+        return apply_mask(rgb, mask, mask_color="white")
 
-        return masked_rgb
+    def apply_mask(self, rgb, mask, mask_color="white"):
+        """Apply mask to RGB image following PlantCV logic.
+
+        Args:
+            rgb: RGB image array
+            mask: Binary mask array
+            mask_color: 'white' or 'black' background color
+
+        Returns:
+            Masked image array
+        """
+        from srcs.utils.mask_utils import apply_mask
+
+        return apply_mask(rgb, mask, mask_color)
 
     def roi(self, rgb, contour):
         from srcs.cli.filters.roi import apply_roi_filter
