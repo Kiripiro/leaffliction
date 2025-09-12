@@ -4,6 +4,7 @@ import sys
 import time
 from pathlib import Path
 
+from srcs.predict.evaluation import evaluate_from_manifest
 from srcs.predict.prediction_visualizer import PredictionVisualizer
 from srcs.predict.predictor import Predictor
 from srcs.utils.common import get_logger
@@ -45,6 +46,20 @@ def parse_args():
         action="store_true",
         help="Process directory of images and output JSON results",
     )
+    parser.add_argument(
+        "--evaluate",
+        action="store_true",
+        help="Evaluate predictions against ground truth (requires --manifest)",
+    )
+    parser.add_argument(
+        "--manifest",
+        help="Path to manifest JSON file for evaluation",
+    )
+    parser.add_argument(
+        "--split",
+        default="val",
+        help="Split to evaluate from manifest (default: val)",
+    )
     return parser.parse_args()
 
 
@@ -67,6 +82,15 @@ def validate_inputs(args):
     meta_file = learnings_dir / "meta.json"
     if not meta_file.exists():
         raise FileNotFoundError(f"Meta file not found: {meta_file}")
+
+    if args.evaluate:
+        if not args.batch_mode:
+            raise ValueError("--evaluate requires --batch-mode")
+        if not args.manifest:
+            raise ValueError("--evaluate requires --manifest")
+        manifest_path = Path(args.manifest)
+        if not manifest_path.exists():
+            raise FileNotFoundError(f"Manifest not found: {manifest_path}")
 
     return image_path, learnings_dir
 
@@ -162,6 +186,42 @@ def save_batch_results_json(results, processing_time, output_path):
     return output_path
 
 
+def _run_evaluation(args, predictor):
+    """Run evaluation metrics computation."""
+    logger.info("Computing evaluation metrics...")
+    try:
+        eval_metrics = evaluate_from_manifest(
+            predictor,
+            Path(args.manifest),
+            split=args.split,
+            output_dir=Path("artifacts/prediction_output/evaluation"),
+        )
+
+        if eval_metrics:
+            logger.info("Evaluation completed successfully")
+            logger.info(
+                "Evaluation results saved to: "
+                "artifacts/prediction_output/evaluation/"
+            )
+            return eval_metrics
+        else:
+            logger.error("Evaluation failed - no metrics computed")
+            return None
+    except Exception as e:
+        logger.error(f"Evaluation failed: {e}")
+        return None
+
+
+def _create_and_display_dashboard(results, eval_metrics):
+    """Create and display the prediction dashboard."""
+    dashboard_dir = Path("artifacts/prediction_output")
+    dashboard_file = DisplayUtils.create_batch_dashboard(
+        results, dashboard_dir / "batch_dashboard.png", eval_metrics
+    )
+    if dashboard_file:
+        DisplayUtils.open_image_viewer(dashboard_file)
+
+
 def log_batch_summary(results, processing_time):
     """Log summary of batch predictions."""
     if not results:
@@ -205,12 +265,8 @@ def main():
                 )
                 logger.info(f"Results saved to: {output_file}")
 
-            dashboard_dir = Path("artifacts/prediction_output")
-            dashboard_file = DisplayUtils.create_batch_dashboard(
-                results, dashboard_dir / "batch_dashboard.png"
-            )
-            if dashboard_file:
-                DisplayUtils.open_image_viewer(dashboard_file)
+            eval_metrics = _run_evaluation(args, predictor) if args.evaluate else None
+            _create_and_display_dashboard(results, eval_metrics)
 
             logger.info("Batch prediction completed successfully")
 

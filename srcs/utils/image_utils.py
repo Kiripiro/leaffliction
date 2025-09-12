@@ -10,7 +10,7 @@ from srcs.utils.common import get_logger
 
 logger = get_logger(__name__)
 
-SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
+SUPPORTED_EXTENSIONS = {".jpg"}
 
 
 class ImageLoader:

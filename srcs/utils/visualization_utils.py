@@ -89,7 +89,7 @@ class DisplayUtils:
 
     @staticmethod
     def create_batch_dashboard(
-        results: List[dict], output_path: Union[str, Path]
+        results: List[dict], output_path: Union[str, Path], metrics: dict = None
     ) -> Path | None:
         """Create comprehensive dashboard for batch prediction analysis."""
         try:
@@ -104,12 +104,23 @@ class DisplayUtils:
             logger.warning("No results for dashboard creation")
             return None
 
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+        if metrics:
+            fig = plt.figure(figsize=(20, 15))
+            ax1 = plt.subplot2grid((3, 2), (0, 0))
+            ax2 = plt.subplot2grid((3, 2), (0, 1))
+            ax3 = plt.subplot2grid((3, 2), (1, 0))
+            ax4 = plt.subplot2grid((3, 2), (1, 1))
+            ax5 = plt.subplot2grid((3, 2), (2, 0), colspan=2)
+        else:
+            fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
 
         DisplayUtils._plot_prediction_distribution(results, ax1)
         DisplayUtils._plot_confidence_histogram(results, ax2)
         DisplayUtils._plot_probability_heatmap(results, ax3)
         DisplayUtils._plot_lowest_confidence(results, ax4)
+
+        if metrics:
+            DisplayUtils._plot_evaluation_metrics(metrics, ax5)
 
         plt.tight_layout(pad=3.0)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -250,4 +261,27 @@ class DisplayUtils:
                 f"{conf:.2%}",
                 va="center",
                 fontsize=8,
+            )
+
+    @staticmethod
+    def _plot_evaluation_metrics(metrics, ax):
+        main_metrics = ["accuracy", "macro_f1", "weighted_f1"]
+        values = [metrics.get(metric, 0) for metric in main_metrics]
+        labels = ["Accuracy", "Macro F1", "Weighted F1"]
+
+        bars = ax.bar(labels, values, color=["#2E8B57", "#4169E1", "#FF6347"])
+        ax.set_title("Evaluation Metrics", fontsize=16, fontweight="bold")
+        ax.set_ylabel("Score", fontsize=12)
+        ax.set_ylim(0, 1.1)
+        ax.grid(axis="y", alpha=0.3)
+
+        for bar, value in zip(bars, values):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 0.02,
+                f"{value:.3f}",
+                ha="center",
+                va="bottom",
+                fontweight="bold",
+                fontsize=12,
             )
