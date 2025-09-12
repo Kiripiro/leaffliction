@@ -121,9 +121,14 @@ def get_image_files(directory_path):
     return ImageLoader.get_image_files(directory_path)
 
 
-def process_batch_predictions(predictor, image_directory):
+def process_batch_predictions(
+    predictor, image_directory, manifest_path=None, split=None
+):
     """Process all images in directory and return batch results."""
-    image_files = get_image_files(image_directory)
+    if manifest_path and split:
+        image_files = get_images_from_manifest(manifest_path, split, image_directory)
+    else:
+        image_files = get_image_files(image_directory)
 
     if not image_files:
         logger.warning(f"No image files found in {image_directory}")
@@ -136,6 +141,27 @@ def process_batch_predictions(predictor, image_directory):
     processing_time = time.time() - start_time
 
     return results, processing_time
+
+
+def get_images_from_manifest(manifest_path, split, base_directory):
+    """Get image paths from manifest for specific split."""
+    import json
+
+    with open(manifest_path, "r") as f:
+        manifest = json.load(f)
+
+    image_files = []
+    base_dir = Path(base_directory)
+
+    for item in manifest.get("items", []):
+        if item.get("split") == split:
+            image_path = base_dir / item["id"]
+            if image_path.exists():
+                image_files.append(image_path)
+            else:
+                logger.warning(f"Image not found: {image_path}")
+
+    return image_files
 
 
 def create_batch_summary(results, processing_time):
@@ -251,7 +277,11 @@ def main():
 
         if args.batch_mode:
             logger.info(f"Processing directory: {image_path}")
-            results, processing_time = process_batch_predictions(predictor, image_path)
+            manifest_path = args.manifest if args.evaluate else None
+            split = args.split if args.evaluate else None
+            results, processing_time = process_batch_predictions(
+                predictor, image_path, manifest_path, split
+            )
 
             if not results:
                 logger.error("No images found or processed successfully.")
