@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
-LOGGER = logging.getLogger(__name__)
+from srcs.utils.common import get_logger
+
+LOGGER = get_logger(__name__)
 
 
 def _gather_predictions_and_labels(

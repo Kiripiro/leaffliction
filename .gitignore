@@ -217,3 +217,5 @@ augmented_directory/
 # Output
 artifacts/
 datasets/
+
+prediction_output/

@@ -3,3 +3,5 @@ keras>=3.0.0
 tensorflow>=2.15
 pillow
 matplotlib
+seaborn
+scikit-learn
