@@ -3,7 +3,7 @@
 Minimal train/validation metadata split (no file copying). Writes only:
 
 ```
-datasets/
+artifacts/datasets/
   manifest_split.json
   split_summary.csv
 ```

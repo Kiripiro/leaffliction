@@ -20,6 +20,8 @@ leaffliction-distribution = "srcs.cli.Distribution:main"
 leaffliction-balance_dataset = "srcs.preprocessing.balance_dataset:main"
 leaffliction-train = "srcs.cli.train:main"
 leaffliction-split = "srcs.cli.split:main"
+leaffliction-predict = "srcs.cli.predict:main"
+leaffliction-augment = "srcs.cli.Augmentation:main"
 
 [tool.setuptools]
 packages = ["srcs"]

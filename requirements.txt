@@ -6,3 +6,5 @@ matplotlib
 pyyaml
 opencv-python
 plantcv>=3.14
+seaborn
+scikit-learn

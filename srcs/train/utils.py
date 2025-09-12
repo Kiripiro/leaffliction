@@ -10,6 +10,7 @@ import keras
 import numpy as np
 
 from srcs.utils.confusion_matrix import confusion_matrix
+from srcs.utils.metrics import compute_evaluation_metrics
 
 LOGGER = logging.getLogger(__name__)
 
@@ -113,6 +114,7 @@ def save_best_variant(
             "labels_file": str((out_dir / "labels.json")),
             "history_file": str((out_dir / "history.json")),
             "confusion_matrix_file": str((out_dir / "confusion_matrix.json")),
+            "metrics_file": str((out_dir / "metrics.json")),
             "keras_version": getattr(keras, "__version__", "unknown"),
             "tensorflow_version": getattr(
                 __import__("tensorflow"), "__version__", "unknown"
@@ -128,3 +130,4 @@ def save_best_variant(
         LOGGER.warning("Failed to write meta.json: %s", e)
 
     confusion_matrix(model, val_data, labels_sorted, out_dir)
+    compute_evaluation_metrics(model, val_data, labels_sorted, out_dir)
