@@ -1,0 +1,49 @@
+# PlantCV Transformation Configuration
+gaussian_sigma: 1.5
+roi_size: [256, 256]
+landmarks_count: 80
+
+# Masking strategy: inclusive captures entire plant including diseased areas
+mask_strategy: inclusive
+bg_bias: light_bg
+grabcut_refine: true
+green_hue_range: [25, 100]
+min_object_area_ratio: 0.10
+max_object_area_ratio: 0.98
+fill_size: 1000
+morph_kernel: 3
+mask_upscale_factor: 1.3
+mask_upscale_long_side: 1500
+
+# Shadow handling
+shadow_suppression: false
+shadow_s_max: 40
+shadow_v_method: percentile
+shadow_v_percentile: 5
+shadow_min_green_fraction: 0.3
+shadow_morphology_kernel: 3
+
+# Disease detection optimizations
+adaptive_threshold: true
+adaptive_block_size: 11
+adaptive_c_constant: 2
+edge_detection_scales: [0.8, 1.0, 1.2]
+edge_sigma_ratio: 0.5
+color_spaces: ["hsv", "lab", "yuv"]
+combine_masks: true
+noise_reduction: true
+bilateral_d: 9
+bilateral_sigma_color: 75
+bilateral_sigma_space: 75
+hsv_channel_for_mask: s
+
+# Brown/disease spot detection
+use_lab_brown: false
+brown_hue_range: [0, 30]
+brown_s_min: 20
+brown_v_max: 200
+brown_min_area_px: 25
+brown_morph_kernel: 3
+lab_a_min: 125
+lab_b_min: 125
+debug_shadow_visualization: false
