@@ -47,15 +47,30 @@ Otherwise, it will run automatically before each commit.
 
 ```
 images/                 # Dataset root (root/PLANT/CLASS/*.jpg)
-srcs/cli/Distribution.py  # Dataset distribution analysis script
-# ... in progress
-artifacts/plots/        # Output: CSV + plots
+srcs/cli/Distribution.py  # Dataset distribution analysis
+srcs/cli/split.py         # Dataset split manifest
+srcs/cli/train.py         # Training script
+datasets/               # Output: manifests + metadata
+  manifest_split.json      # Train/val split manifest
+artifacts/plots/          # Output: CSV + plots
+  distribution.csv         # Cumulative distribution CSV
+  <PLANT>_bar.png          # Per-plant bar chart
+  <PLANT>_pie.png          # Per-plant pie chart
+artifacts/models/         # Output: trained models + metadata
+  leaf_cnn.keras           # Final saved model
+  labels.json              # Label→index mapping
+  history.json             # Training curves
+  confusion_matrix.json    # Validation evaluation
+  confusion_matrix.png     # Validation evaluation (visual)
+  meta.json                # Run/data/model/training/system metadata
 ```
 
-## 6. CLI scripts documentation
+## 6. Documentation
 
 -   Distribution analysis: `docs/cli/distribution.md`
 -   Train/validation split: `docs/cli/split.md`
+-   Training guide: `docs/training.md`
+-   Model architecture: `docs/architecture.md`
 
 ## 7. Logging
 
