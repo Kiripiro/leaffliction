@@ -76,7 +76,7 @@ class Predictor:
         for img_path in paths:
             try:
                 original, processed, transformed = self.image_processor.process_image(
-                    img_path
+                    img_path, enable_subprocess=False
                 )
                 processed_data.append(processed[0])
                 original_arrays.append((img_path, original, transformed))

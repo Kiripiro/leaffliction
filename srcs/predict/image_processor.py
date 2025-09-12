@@ -20,14 +20,18 @@ class ImageProcessor:
     def __init__(self, img_size: int = 224):
         self.img_size = img_size
 
-    def process_image(self, image_path: str | Path) -> Tuple[np.ndarray, np.ndarray]:
+    def process_image(
+        self, image_path: str | Path, enable_subprocess: bool = True
+    ) -> Tuple[np.ndarray, np.ndarray]:
         logger.debug(f"Processing image: {image_path}")
 
         image_path = Path(image_path)
         img = ImageLoader.load_pil_image(image_path, ensure_rgb=True)
         original_array = np.array(img)
 
-        transformed_array = self._get_transformed_array(image_path, original_array)
+        transformed_array = self._get_transformed_array(
+            image_path, original_array, enable_subprocess
+        )
 
         transformed_img = ImageTransforms.resize_image(
             ImageLoader.array_to_pil(transformed_array),
@@ -41,22 +45,33 @@ class ImageProcessor:
         return original_array, processed_array, transformed_array
 
     def _get_transformed_array(
-        self, image_path: Path, original_array: np.ndarray
+        self,
+        image_path: Path,
+        original_array: np.ndarray,
+        enable_subprocess: bool = True,
     ) -> np.ndarray:
+        if not enable_subprocess:
+            return original_array
+
         mask_image_path = self._find_mask_image(image_path)
         logger.debug(f"Looking for mask image at: {mask_image_path}")
 
         if mask_image_path and mask_image_path.exists():
             return self._load_existing_mask(mask_image_path)
 
-        return self._apply_transformation(original_array)
+        return self._apply_transformation(original_array, enable_subprocess)
 
     def _load_existing_mask(self, mask_image_path: Path) -> np.ndarray:
         logger.info(f"Using existing transformed mask image: {mask_image_path}")
         mask_img = ImageLoader.load_pil_image(mask_image_path, ensure_rgb=True)
         return np.array(mask_img)
 
-    def _apply_transformation(self, original_array: np.ndarray) -> np.ndarray:
+    def _apply_transformation(
+        self, original_array: np.ndarray, enable_subprocess: bool = True
+    ) -> np.ndarray:
+        if not enable_subprocess:
+            return original_array
+
         logger.info("No mask image found, applying transformation")
         try:
             return self._run_transformation_subprocess(original_array)
