@@ -33,7 +33,7 @@ for _k in (
 ):
     os.environ.setdefault(_k, "1")
 
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
+IMAGE_EXTS = {".jpg"}
 DEFAULT_TYPES = (
     "Blur",
     "Mask",

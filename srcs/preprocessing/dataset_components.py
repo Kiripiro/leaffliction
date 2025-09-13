@@ -16,7 +16,7 @@ class DistributionAnalyzer:
     If input_path is a file, it expects a manifest JSON with "items" entries.
     """
 
-    IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff"}
+    IMG_EXTS = {".jpg"}
 
     def __init__(self, input_path):
         self.input_path = Path(input_path)
