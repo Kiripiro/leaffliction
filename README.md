@@ -70,6 +70,62 @@ artifacts/models/         # Output: trained models + metadata
   meta.json                # Run/data/model/training/system metadata
 ```
 
+## 5. End-to-end workflow (augmented dataset with 80/20 split)
+
+Goal: use the balanced augmented dataset `artifacts/augmented_directory` for training, with 20% validation and 80% training.
+
+Checklist:
+- Distribution: show original dataset imbalance.
+- Augmentation: balance classes and build `augmented_directory` with a new manifest.
+- Split: generate a manifest with 20% validation from the augmented dataset.
+- Train: default trainer consumes the augmented manifest and respects splits.
+- Predict: evaluate in single or batch mode using the trained model.
+
+Steps:
+1) Distribution on original images
+   - Inspect imbalance and generate plots/CSV
+   - Example:
+     ```bash
+     python srcs/cli/Distribution.py images
+     ```
+
+2) Augmentation to balance classes
+   Entrée: `images/`
+   Sorties: `artifacts/augmented_directory/` et `artifacts/datasets/manifest_augmented.json`
+   Exemple:
+     ```bash
+     python srcs/cli/Augmentation.py images --output artifacts/augmented_directory
+     ```
+
+3) Split the augmented dataset with a 20% validation ratio
+   - Writes a new manifest from the augmented directory. Use `--val-ratio 0.2` and target `manifest_augmented.json`.
+   - Example:
+     ```bash
+     python srcs/cli/split.py --src artifacts/augmented_directory \
+       --out artifacts/datasets \
+       --val-ratio 0.2 \
+       --out-manifest artifacts/datasets/manifest_augmented.json
+     ```
+
+4) Train using the augmented manifest (default)
+   - The trainer defaults to `artifacts/datasets/manifest_augmented.json` and falls back to `manifest_split.json`.
+   - Example:
+     ```bash
+     python -m srcs.cli.train --epochs 20 --batch-size 32 --img-size 224
+     ```
+
+5) Predict and evaluate
+   - Single image or batch; for evaluation, provide the manifest and split (e.g., `val`).
+   - Examples:
+     ```bash
+     # Single image
+     python srcs/cli/predict.py test_images/Unit_test1/Apple_healthy1.JPG
+
+     # Batch with evaluation on the augmented validation split
+     python srcs/cli/predict.py artifacts/augmented_directory --batch-mode \
+       --evaluate --manifest artifacts/datasets/manifest_augmented.json --split val
+     ```
+
 ## 6. Documentation
 
 -   Distribution analysis: `docs/cli/distribution.md`

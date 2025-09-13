@@ -30,8 +30,8 @@ LOGGER = logging.getLogger(__name__)
 REGULARIZED_CFG = {
     "optimizer": "adamw",
     "lr": 0.002,
-    "weight_decay": 0.00005,
-    "label_smoothing": 0.03,
+    "weight_decay": 0.0001,
+    "label_smoothing": 0.02,
     "cosine_decay": True,
     "ema_decay": 0.999,
     "clipnorm": 0.5,
@@ -97,6 +97,15 @@ def parse_args() -> argparse.Namespace:
         "--separable",
         action="store_true",
         help="Use depthwise-separable convolutions (lite)",
+    )
+    p.add_argument(
+        "--target-val-acc",
+        type=float,
+        default=None,
+        help=(
+            "Stop training early when validation accuracy reaches this threshold "
+            "(e.g., 0.90)."
+        ),
     )
     args = p.parse_args()
     if getattr(args, "tiny", False):
@@ -398,6 +407,27 @@ def train_and_save_model(
         meta: Training metadata
     """
     callbacks, ema_cb = build_callbacks(cfg)
+
+    # Optional early stop when reaching a target validation accuracy
+    if getattr(args, "target_val_acc", None):
+
+        class _StopOnValAcc(keras.callbacks.Callback):
+            def __init__(self, threshold: float) -> None:
+                super().__init__()
+                self.threshold = float(threshold)
+
+            def on_epoch_end(self, epoch, logs=None):
+                logs = logs or {}
+                val_acc = logs.get("val_accuracy")
+                if val_acc is not None and float(val_acc) >= self.threshold:
+                    logging.getLogger(__name__).info(
+                        "Target val_accuracy reached: %.4f >= %.4f; stopping",
+                        float(val_acc),
+                        self.threshold,
+                    )
+                    self.model.stop_training = True
+
+        callbacks.append(_StopOnValAcc(args.target_val_acc))
 
     history = model.fit(
         train_seq,

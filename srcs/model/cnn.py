@@ -1,112 +1,131 @@
 from __future__ import annotations
 
-import logging
-from typing import List, Optional, Tuple
+from typing import Any, List, Tuple
 
 import keras
-import numpy as np
 from keras import layers, regularizers
 
-LOGGER = logging.getLogger(__name__)
+
+def _se_block(x, se_ratio: int = 8) -> Any:
+    """Squeeze-and-Excitation block."""
+    in_channels = x.shape[-1]
+    if in_channels is None:
+        return x
+    se = layers.GlobalAveragePooling2D(keepdims=True)(x)
+    se = layers.Conv2D(int(in_channels // se_ratio), 1, activation="relu")(se)
+    se = layers.Conv2D(int(in_channels), 1, activation="sigmoid")(se)
+    return layers.Multiply()([x, se])
+
+
+def _conv_block(x, filters: int, separable: bool, l2_reg: float) -> Any:
+    reg = regularizers.l2(l2_reg) if l2_reg and l2_reg > 0 else None
+    if separable:
+        x = layers.SeparableConv2D(
+            filters, 3, padding="same", use_bias=False, kernel_regularizer=reg
+        )(x)
+    else:
+        x = layers.Conv2D(
+            filters, 3, padding="same", use_bias=False, kernel_regularizer=reg
+        )(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Activation("relu")(x)
+    return x
+
+
+def _res_block(x, filters: int, separable: bool, l2_reg: float, use_se: bool) -> Any:
+    """Residual block with optional SE and (separable) convs."""
+    shortcut = x
+    y = _conv_block(x, filters, separable, l2_reg)
+    y = _conv_block(y, filters, separable, l2_reg)
+    if use_se:
+        y = _se_block(y)
+    # Match channels for residual add
+    if shortcut.shape[-1] != y.shape[-1]:
+        proj = layers.Conv2D(filters, 1, padding="same", use_bias=False)(shortcut)
+        proj = layers.BatchNormalization()(proj)
+        shortcut = proj
+    y = layers.Add()([shortcut, y])
+    y = layers.Activation("relu")(y)
+    return y
 
 
 def build_leafcnn(
+    *,
     num_classes: int,
-    img_size: int,
-    use_norm: bool,
-    widths: List[int],
-    drop_block: float,
-    drop_top: float,
-    l2_reg: float,
+    img_size: int = 224,
+    use_norm: bool = True,
+    widths: List[int] | None = None,
+    drop_block: float = 0.15,
+    drop_top: float = 0.40,
+    l2_reg: float = 0.0,
     separable: bool = False,
-) -> Tuple[keras.Model, Optional[layers.Normalization]]:
-    """Flexible CNN builder with scaling and separable option.
+    augment: bool = True,
+    use_se: bool = True,
+) -> Tuple[keras.Model, layers.Layer | None]:
+    """Build a compact CNN for leaf classification.
 
-    Returns (model, normalization_layer_or_None).
+    Returns (model, norm_layer) where norm_layer may be None if use_norm=False.
     """
-    kr = regularizers.l2(l2_reg) if l2_reg > 0 else None
-    inputs = keras.Input(shape=(img_size, img_size, 3))
+    widths = widths or [32, 64, 128]
+    inputs = layers.Input((img_size, img_size, 3))
+
+    norm_layer = None
     x = inputs
-    norm_layer: Optional[layers.Normalization] = None
+    if augment:
+        aug = keras.Sequential(
+            [
+                layers.RandomFlip("horizontal"),
+                layers.RandomRotation(0.05),
+                layers.RandomContrast(0.1),
+            ],
+            name="augment",
+        )
+        x = aug(x)
     if use_norm:
-        norm_layer = layers.Normalization(name="adapt_norm")
+        norm_layer = layers.Normalization(axis=-1, name="input_norm")
         x = norm_layer(x)
 
-    Conv = layers.SeparableConv2D if separable else layers.Conv2D
-    for bi, f in enumerate(widths, start=1):
-        name = f"b{bi}"
-        for ci in range(2):
-            if separable:
-                x = Conv(
-                    f,
-                    3,
-                    padding="same",
-                    use_bias=False,
-                    depthwise_initializer="he_normal",
-                    pointwise_initializer="he_normal",
-                    depthwise_regularizer=kr,
-                    pointwise_regularizer=kr,
-                    name=f"{name}_sepconv{ci + 1}",
-                )(x)
-            else:
-                x = Conv(
-                    f,
-                    3,
-                    padding="same",
-                    use_bias=False,
-                    kernel_initializer="he_normal",
-                    kernel_regularizer=kr,
-                    name=f"{name}_conv{ci + 1}",
-                )(x)
-            x = layers.BatchNormalization(name=f"{name}_bn{ci + 1}")(x)
-            x = layers.ReLU(name=f"{name}_relu{ci + 1}")(x)
-        x = layers.MaxPooling2D(pool_size=2, name=f"{name}_pool")(x)
-        x = layers.Dropout(drop_block, name=f"{name}_drop")(x)
+    # Stem
+    x = _conv_block(x, widths[0], separable, l2_reg)
 
-    x = layers.GlobalAveragePooling2D(name="gap")(x)
-    x = layers.Dropout(drop_top, name="top_drop")(x)
-    outputs = layers.Dense(
-        num_classes,
-        activation="softmax",
-        kernel_regularizer=kr,
-        name="probs",
-    )(x)
+    # Stacked stages with residual blocks
+    for f in widths:
+        x = _res_block(x, f, separable, l2_reg, use_se)
+        if drop_block and drop_block > 0:
+            x = layers.SpatialDropout2D(rate=drop_block)(x)
+        x = layers.MaxPool2D(pool_size=2)(x)
+
+    x = layers.GlobalAveragePooling2D()(x)
+    if drop_top and drop_top > 0:
+        x = layers.Dropout(drop_top)(x)
+    outputs = layers.Dense(num_classes, activation="softmax")(x)
+
     model = keras.Model(inputs, outputs, name="leaf_cnn")
     return model, norm_layer
 
 
-def build_model(
-    num_classes: int, img_size: int, use_norm: bool, weight_decay: float
-) -> Tuple[keras.Model, Optional[layers.Normalization]]:
-    """Backward-compatible builder: base scale.
+def adapt_normalization(norm_layer: layers.Layer | None, train_seq) -> None:
+    """Adapt the Normalization layer on a subset of training images.
 
-    Equivalent to widths=[32,64,128,256], drop_block=0.15,
-    drop_top=0.4, l2_reg=weight_decay, separable=False.
+    If no normalization layer is provided, do nothing.
     """
-    return build_leafcnn(
-        num_classes=num_classes,
-        img_size=img_size,
-        use_norm=use_norm,
-        widths=[32, 64, 128, 256],
-        drop_block=0.15,
-        drop_top=0.4,
-        l2_reg=weight_decay,
-        separable=False,
-    )
-
-
-def adapt_normalization(norm_layer: Optional[layers.Normalization], train_seq) -> None:
-    nl = norm_layer
-    if nl is None:
+    if norm_layer is None or not hasattr(norm_layer, "adapt"):
         return
-    imgs = []
-    seen = 0
-    for i in range(len(train_seq)):
-        batch_x, _ = train_seq[i]
-        imgs.append(batch_x)
-        seen += len(batch_x)
-        if seen >= 2048:
+
+    # Collect up to ~2048 samples from first few batches
+    import numpy as np
+
+    samples = []
+    max_samples = 2048
+    collected = 0
+    for i in range(min(len(train_seq), 64)):
+        batch = train_seq[i]
+        X = batch[0] if isinstance(batch, (list, tuple)) else batch
+        samples.append(X)
+        collected += len(X)
+        if collected >= max_samples:
             break
-    arr = np.concatenate(imgs, axis=0)
-    nl.adapt(arr)
-    LOGGER.info("Normalization layer adapted on %d samples", arr.shape[0])
+    if not samples:
+        return
+    data = np.concatenate(samples, axis=0)
+    norm_layer.adapt(data)

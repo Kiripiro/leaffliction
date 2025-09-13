@@ -122,6 +122,32 @@ def allocate_validation_counts(
     return alloc
 
 
+def allocate_validation_by_ratio(
+    by_label_counts: Mapping[str, int], ratio: float
+) -> Dict[str, int]:
+    """Compute per-label validation allocation using a fixed ratio.
+
+    Rules:
+    - ratio in (0, 1). Rounded to nearest integer per label using round-half-up.
+    - Keep \u22651 training image per label (so val_count <= max(n-1, 0)).
+    - For labels with n == 1, val_count = 0.
+    """
+    if not (0.0 < ratio < 1.0):
+        raise ValueError("val-ratio must be a float between 0 and 1 (e.g., 0.2)")
+
+    alloc: Dict[str, int] = {}
+    for lab, n in by_label_counts.items():
+        if n <= 1:
+            alloc[lab] = 0
+            continue
+        # Round to nearest int with half-up behavior
+        desired = int((n * ratio) + 0.5)
+        # Ensure at least 1 training sample remains
+        desired = min(desired, n - 1)
+        alloc[lab] = max(0, desired)
+    return alloc
+
+
 def build_split_map(
     items_by_label: Mapping[str, List[ImgItem]],
     alloc_val: Mapping[str, int],
@@ -277,7 +303,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--src",
         type=Path,
-        default=Path("images"),
+        default=Path("artifacts/augmented_directory"),
         help="Original images root (read-only).",
     )
     parser.add_argument(
@@ -293,7 +319,26 @@ def parse_args() -> argparse.Namespace:
         help="Minimum total number of validation images across all classes.",
     )
     parser.add_argument(
-        "--seed", type=int, default=42, help="Deterministic random seed for selection."
+        "--val-ratio",
+        type=float,
+        default=0.2,
+        help=(
+            "Validation ratio in (0,1) applied per class (e.g., 0.2 for 20%). "
+            "When provided, overrides --min-val strategy."
+        ),
+    )
+    parser.add_argument(
+        "--out-manifest",
+        type=Path,
+        default="artifacts/datasets/manifest_split.json",
+        help=(
+            "Optional explicit path for the output manifest JSON. If omitted, "
+            "writes to <out>/manifest_split.json. Use this to write "
+            "manifest_augmented.json when splitting augmented_directory."
+        ),
+    )
+    parser.add_argument(
+        "--seed", type=int, default=32, help="Deterministic random seed for selection."
     )
     parser.add_argument(
         "--reset",
@@ -325,7 +370,14 @@ def main() -> None:
         for it in items:
             items_by_label.setdefault(it.label, []).append(it)
         counts = {lab: len(lst) for lab, lst in items_by_label.items()}
-        alloc_val = allocate_validation_counts(counts, args.min_val)
+        if args.val_ratio is not None:
+            alloc_val = allocate_validation_by_ratio(counts, args.val_ratio)
+            LOGGER.info(
+                "Using ratio-based allocation: val_ratio=%.3f (per class)",
+                args.val_ratio,
+            )
+        else:
+            alloc_val = allocate_validation_counts(counts, args.min_val)
         log_allocation(alloc_val, counts)
         split_map = build_split_map(items_by_label, alloc_val, args.seed)
         if len(split_map) != len(items):
@@ -333,14 +385,22 @@ def main() -> None:
                 "Split map size mismatch (%d vs %d)", len(split_map), len(items)
             )
             sys.exit(1)
-        manifest_path = args.out / "manifest_split.json"
+        manifest_path = (
+            args.out_manifest
+            if args.out_manifest is not None
+            else args.out / "manifest_split.json"
+        )
         write_manifest(
             manifest_path,
             items,
             split_map,
             src_root=args.src,
             seed=args.seed,
-            min_val=args.min_val,
+            min_val=(
+                int(args.val_ratio * 100)
+                if args.val_ratio is not None
+                else args.min_val
+            ),
         )
         summary_path = args.out / "split_summary.csv"
         write_summary(summary_path, items_by_label, split_map)

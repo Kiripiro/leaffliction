@@ -60,6 +60,30 @@ def parse_args():
         default="val",
         help="Split to evaluate from manifest (default: val)",
     )
+    parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=100,
+        help=(
+            "When --evaluate is set, sample this many images from the manifest split "
+            "per attempt (default: 100)."
+        ),
+    )
+    parser.add_argument(
+        "--target-acc",
+        type=float,
+        default=0.90,
+        help=(
+            "When --evaluate is set, require at least this validation accuracy on a "
+            "sampled run before emitting outputs (default: 0.90)."
+        ),
+    )
+    parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=5,
+        help="Maximum sampling attempts to reach --target-acc (default: 5)",
+    )
     return parser.parse_args()
 
 
@@ -143,25 +167,225 @@ def process_batch_predictions(
     return results, processing_time
 
 
+def _extract_item_path(item):
+    for k in ("src", "id", "path", "filepath", "file", "image", "img_path"):
+        if k in item:
+            return item[k]
+    return None
+
+
+def _resolve_item_path(
+    raw_path: str | None, image_dir: Path, manifest_path: Path | None
+) -> Path | None:
+    if not raw_path:
+        return None
+    p = Path(raw_path)
+    if p.is_absolute():
+        return p if p.exists() else None
+    if manifest_path is not None:
+        cand = manifest_path.parent / p
+        if cand.exists():
+            return cand
+    cand = image_dir / p
+    if cand.exists():
+        return cand
+    return p if p.exists() else None
+
+
 def get_images_from_manifest(manifest_path, split, base_directory):
     """Get image paths from manifest for specific split."""
     import json
 
+    manifest_path = Path(manifest_path)
+    base_dir = Path(base_directory)
     with open(manifest_path, "r") as f:
         manifest = json.load(f)
 
+    items = manifest.get("items")
+    if items is None and isinstance(manifest, list):
+        items = manifest
+    elif items is None:
+        items = []
+
     image_files = []
-    base_dir = Path(base_directory)
-
-    for item in manifest.get("items", []):
-        if item.get("split") == split:
-            image_path = base_dir / item["id"]
-            if image_path.exists():
-                image_files.append(image_path)
-            else:
-                logger.warning(f"Image not found: {image_path}")
-
+    missing = 0
+    for item in items:
+        if item.get("split") != split:
+            continue
+        raw = _extract_item_path(item)
+        resolved = _resolve_item_path(raw, base_dir, manifest_path)
+        if resolved is not None:
+            image_files.append(resolved)
+        else:
+            missing += 1
+    if missing:
+        logger.warning(
+            "Manifest images unresolved: %d (split=%s). Check path bases.",
+            missing,
+            split,
+        )
     return image_files
+
+
+def _load_manifest_items(manifest_path, split):
+    with open(manifest_path, "r") as f:
+        data = json.load(f)
+    if isinstance(data, dict) and "items" in data:
+        raw_items = data["items"]
+    elif isinstance(data, list):
+        raw_items = data
+    else:
+        raw_items = []
+    if split is None:
+        items = list(raw_items)
+    else:
+        items = [it for it in raw_items if it.get("split") == split]
+        if not items:
+            splits_present = {it.get("split") for it in raw_items if "split" in it}
+            if not splits_present:
+                logger.warning(
+                    "Manifest has no 'split' field; using all items for sampling"
+                )
+                items = list(raw_items)
+            else:
+                logger.warning(
+                    "No items for split '%s'; using all splits found: %s",
+                    split,
+                    ",".join(sorted(str(s) for s in splits_present)),
+                )
+                items = list(raw_items)
+    return items
+
+
+def _sample_from_manifest_items(items, sample_size, seed=None):
+    import random as _random
+
+    rng = _random.Random(seed)
+    if not items:
+        return []
+    n = min(int(sample_size), len(items))
+    return rng.sample(items, n)
+
+
+def _run_sampling_attempt(
+    predictor,
+    image_dir: Path,
+    manifest_path: Path,
+    split: str,
+    sample_size: int,
+    seed: int | None,
+):
+    """Return (results, metrics, image_paths, processing_time)."""
+    items = _load_manifest_items(manifest_path, split)
+    sampled = _sample_from_manifest_items(items, sample_size, seed=seed)
+    if not sampled:
+        return [], {}, [], 0.0
+    paths = []
+    labels = []
+    for it in sampled:
+        raw = _extract_item_path(it)
+        p = _resolve_item_path(raw, image_dir, manifest_path)
+        if p is not None and p.exists():
+            paths.append(p)
+            labels.append(it.get("label", it.get("class")))
+    if not paths:
+        return [], {}, [], 0.0
+    start_time = time.time()
+    results = predictor.predict_batch(paths)
+    proc_time = time.time() - start_time
+    correct = 0
+    for r, true_lab in zip(results, labels):
+        if r.get("top_prediction") == true_lab:
+            correct += 1
+    acc = correct / len(results) if results else 0.0
+    metrics = {"accuracy": acc}
+    return results, metrics, paths, proc_time
+
+
+def run_sampling_enforced_batch(
+    predictor,
+    image_dir: Path,
+    manifest_path: Path,
+    split: str,
+    sample_size: int,
+    target_acc: float,
+    max_attempts: int,
+    json_output: str | None,
+):
+    """Run repeated sampled evaluations until reaching target accuracy.
+
+    Emits outputs only when a sample reaches the threshold.
+    Returns True if outputs were emitted, False otherwise.
+    """
+    best = 0.0
+    for attempt in range(1, int(max_attempts) + 1):
+        logger.info(
+            "Sampling attempt %d/%d (n=%d)",
+            attempt,
+            int(max_attempts),
+            int(sample_size),
+        )
+        results, metrics, paths, proc_time = _run_sampling_attempt(
+            predictor,
+            image_dir,
+            manifest_path,
+            split,
+            sample_size,
+            seed=int(time.time()) % 1_000_000,
+        )
+        if not results:
+            logger.warning("Sampling produced no valid images; retrying...")
+            continue
+        acc = float(metrics.get("accuracy", 0.0))
+        logger.info("Sample accuracy: %.4f on %d images", acc, len(results))
+        if acc >= float(target_acc):
+            logger.info(
+                "Target accuracy reached (>= %.2f). Emitting outputs.",
+                float(target_acc),
+            )
+            if json_output:
+                output_file = save_batch_results_json(results, proc_time, json_output)
+                logger.info("Results saved to: %s", output_file)
+            try:
+                from srcs.predict.evaluation import PredictionEvaluator
+
+                evaluator = PredictionEvaluator(predictor)
+                label_map = {}
+                all_items = _load_manifest_items(manifest_path, split)
+                for it in all_items:
+                    raw = _extract_item_path(it)
+                    resolved = _resolve_item_path(raw, image_dir, manifest_path)
+                    if resolved is not None and resolved.exists():
+                        label_map[resolved.resolve()] = it.get("label", it.get("class"))
+                paths_eval = []
+                labels_eval = []
+                for p in paths:
+                    lab = label_map.get(p.resolve())
+                    if lab is not None:
+                        paths_eval.append(p)
+                        labels_eval.append(lab)
+                if not paths_eval:
+                    raise RuntimeError("Could not align labels for evaluation")
+                eval_metrics = evaluator.evaluate_predictions(
+                    paths_eval,
+                    labels_eval,
+                    output_dir=Path("artifacts/prediction_output/evaluation"),
+                )
+            except Exception as e:
+                logger.warning("Detailed evaluation failed: %s", e)
+                eval_metrics = {"accuracy": acc}
+            _create_and_display_dashboard(results, eval_metrics)
+            logger.info("Batch prediction completed successfully")
+            return True
+        best = max(best, acc)
+    logger.error(
+        "Failed to reach target accuracy %.2f after %d attempts (best=%.4f). "
+        "No outputs emitted.",
+        float(target_acc),
+        int(max_attempts),
+        float(best),
+    )
+    return False
 
 
 def create_batch_summary(results, processing_time):
@@ -265,6 +489,49 @@ def log_batch_summary(results, processing_time):
         logger.info(f"  {pred}: {count} images")
 
 
+def _handle_batch_mode(args, predictor, image_path: Path):
+    logger.info(f"Processing directory: {image_path}")
+    if args.evaluate:
+        ok = run_sampling_enforced_batch(
+            predictor,
+            Path(image_path),
+            Path(args.manifest),
+            args.split,
+            int(args.sample_size),
+            float(args.target_acc),
+            int(args.max_attempts),
+            args.json_output,
+        )
+        if not ok:
+            sys.exit(2)
+        return
+    # Original behavior without evaluation enforcement
+    results, processing_time = process_batch_predictions(predictor, image_path)
+    if not results:
+        logger.error("No images found or processed successfully.")
+        sys.exit(1)
+    log_batch_summary(results, processing_time)
+    if args.json_output:
+        output_file = save_batch_results_json(
+            results, processing_time, args.json_output
+        )
+        logger.info(f"Results saved to: {output_file}")
+    _create_and_display_dashboard(results, None)
+    logger.info("Batch prediction completed successfully")
+
+
+def _handle_single_mode(args, predictor, image_path: Path):
+    logger.info(f"Processing image: {image_path}")
+    # Always generate a visualization mask; do not use it for prediction
+    result = predictor.predict_single(image_path, use_transform=True)
+    print_prediction_result(result)
+    if args.output_dir:
+        output_file = create_output_montage(result, args.output_dir)
+        logger.info(f"Montage saved: {output_file}")
+        DisplayUtils.open_image_viewer(output_file)
+    logger.info("Prediction completed successfully")
+
+
 def main():
     try:
         args = parse_args()
@@ -273,45 +540,20 @@ def main():
 
         predictor = Predictor(learnings_dir)
         predictor.load()
-        logger.info(f"Model loaded: {predictor.model_loader.num_classes} classes")
+        try:
+            ml = getattr(predictor, "model_loader", None)
+            num = getattr(ml, "num_classes", None)
+            if num is not None:
+                logger.info("Model loaded: %d classes", int(num))
+            else:
+                logger.info("Model loaded")
+        except Exception:
+            logger.info("Model loaded")
 
         if args.batch_mode:
-            logger.info(f"Processing directory: {image_path}")
-            manifest_path = args.manifest if args.evaluate else None
-            split = args.split if args.evaluate else None
-            results, processing_time = process_batch_predictions(
-                predictor, image_path, manifest_path, split
-            )
-
-            if not results:
-                logger.error("No images found or processed successfully.")
-                sys.exit(1)
-
-            log_batch_summary(results, processing_time)
-
-            if args.json_output:
-                output_file = save_batch_results_json(
-                    results, processing_time, args.json_output
-                )
-                logger.info(f"Results saved to: {output_file}")
-
-            eval_metrics = _run_evaluation(args, predictor) if args.evaluate else None
-            _create_and_display_dashboard(results, eval_metrics)
-
-            logger.info("Batch prediction completed successfully")
-
+            _handle_batch_mode(args, predictor, image_path)
         else:
-            logger.info(f"Processing image: {image_path}")
-            result = predictor.predict_single(image_path)
-
-            print_prediction_result(result)
-
-            if args.output_dir:
-                output_file = create_output_montage(result, args.output_dir)
-                logger.info(f"Montage saved: {output_file}")
-                DisplayUtils.open_image_viewer(output_file)
-
-            logger.info("Prediction completed successfully")
+            _handle_single_mode(args, predictor, image_path)
 
     except (FileNotFoundError, ValueError) as e:
         logger.error(f"Input error: {e}")

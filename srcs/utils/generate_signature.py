@@ -28,7 +28,9 @@ class SignatureGenerator:
     def _create_artifacts_zip(self, output_zip: Path) -> None:
         logger.info(f"Creating zip of artifacts directory: {self.artifacts_dir}")
 
-        with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zipf:
+        with zipfile.ZipFile(
+            output_zip, "w", zipfile.ZIP_DEFLATED, compresslevel=9
+        ) as zipf:
             for root, _, files in os.walk(self.artifacts_dir):
                 for file in files:
                     file_path = Path(root) / file

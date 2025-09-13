@@ -19,19 +19,20 @@ logger = get_logger(__name__)
 class DatasetBalancer:
     def __init__(
         self,
-        manifest_path,
+        manifest_path=None,
         source_dir="images",
         target_dir="augmented_directory",
         seed=42,
         workers=None,
     ):
-        self.manifest_path = Path(manifest_path)
+        self.manifest_path = Path(manifest_path) if manifest_path else None
         self.source_dir = Path(source_dir)
         self.target_dir = Path(target_dir)
         self.transformer = ImageAugmenter(seed=seed)
         self.workers = self._validate_workers(workers)
 
-        self.analyzer = DistributionAnalyzer(manifest_path)
+        # Analyzer can now take either a manifest or a directory
+        self.analyzer = DistributionAnalyzer(self.source_dir)
         self.planner = None
         self.manifest_generator = None
         self.plan = {}
@@ -174,7 +175,13 @@ class DatasetBalancer:
             self.workers,
         )
         manifest = self.manifest_generator.generate_augmented_manifest()
-        manifest_path = self.manifest_path.parent / "manifest_augmented.json"
+        out_dir = (
+            self.manifest_path.parent
+            if self.manifest_path is not None
+            else Path("artifacts/datasets")
+        )
+        out_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = out_dir / "manifest_augmented.json"
         self.manifest_generator.save_manifest(manifest, manifest_path)
 
     def run(self):

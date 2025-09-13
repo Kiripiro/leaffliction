@@ -31,14 +31,16 @@ class ProcessingError(AugmentationError):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Apply augmentations to balance a dataset from manifest",
+        description=(
+            "Apply augmentations to balance a dataset. "
+            "Preferred usage: provide a dataset root (PLANT/CLASS/*.jpg)."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Dataset mode (manifest + source directory)
-  leaffliction-augment datasets/manifest_split.json images/
-  leaffliction-augment datasets/manifest_split.json images/ \\
-    --output my_augmented_dataset
+  # Dataset mode (recommended): provide the dataset root
+  leaffliction-augment images/
+  leaffliction-augment images/ --output my_augmented_dataset
 
   # Single image mode (creates example folder)
   leaffliction-augment image.jpg
@@ -48,12 +50,10 @@ Examples:
 
     parser.add_argument(
         "input_path",
-        help="Path to manifest.json file OR single image file",
-    )
-    parser.add_argument(
-        "source_dir",
-        nargs="?",
-        help="Path to the source images directory (required for manifest mode)",
+        help=(
+            "Path to dataset root directory (preferred) OR single image file. "
+            "Providing a JSON manifest is deprecated."
+        ),
     )
     parser.add_argument(
         "-out",
@@ -88,10 +88,22 @@ def main():
         if not input_path.exists():
             raise InputValidationError(f"Input path not found: {input_path}")
 
-        if input_path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
+        # Single image mode
+        if (
+            input_path.is_file()
+            and input_path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
+        ):
             single_image_mode(args, input_path)
-        else:
-            dataset_mode(args, input_path)
+            return
+
+        # Dataset mode by directory (preferred)
+        if input_path.is_dir():
+            dataset_mode_dir(args, input_path)
+            return
+
+        raise InputValidationError(
+            "Unsupported input. Provide a dataset directory or an image file."
+        )
 
     except InputValidationError as e:
         logger.error(f"Input validation error: {e}")
@@ -139,32 +151,21 @@ def single_image_mode(args, image_path):
     logger.info("Single image augmentation completed successfully")
 
 
-def dataset_mode(args, manifest_path):
-    """Process a dataset from manifest"""
-    if not args.source_dir:
-        raise InputValidationError("Source directory is required for manifest mode")
-
-    source_dir = Path(args.source_dir)
+def dataset_mode_dir(args, source_dir: Path):
+    """Process a dataset directly from a source directory (preferred)."""
     target_dir = Path(args.output) if args.output else Path(DEFAULT_DATASET_OUTPUT)
-
     if not source_dir.exists():
         raise InputValidationError(f"Source directory not found: {source_dir}")
-
-    logger.info(f"Processing manifest: {manifest_path}")
-    logger.info(f"Source directory: {source_dir}")
+    logger.info(f"Processing dataset directory: {source_dir}")
     logger.info(f"Target directory: {target_dir}")
-
     balancer = DatasetBalancer(
-        manifest_path=str(manifest_path),
         source_dir=str(source_dir),
         target_dir=str(target_dir),
         seed=args.seed,
         workers=args.workers,
     )
-
     balancer.run()
     logger.info("Dataset augmentation completed successfully")
-
     try:
         analyze_distribution(target_dir)
     except Exception as e:

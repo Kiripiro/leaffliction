@@ -22,7 +22,7 @@ class ImageProcessor:
 
     def process_image(
         self, image_path: str | Path, enable_subprocess: bool = True
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         logger.debug(f"Processing image: {image_path}")
 
         image_path = Path(image_path)
@@ -160,3 +160,18 @@ class ImageProcessor:
         else:
             mask_path = image_path.parent / f"{stem}__T_Mask.jpg"
         return mask_path
+
+    def generate_mask_for_visualization(self, image_path: str | Path) -> np.ndarray:
+        """Generate a mask/transformed array for display only.
+
+        This does NOT affect the model input. Fallbacks to original if transform fails.
+        """
+        image_path = Path(image_path)
+        img = ImageLoader.load_pil_image(image_path, ensure_rgb=True)
+        original_array = np.array(img)
+        try:
+            return self._get_transformed_array(
+                image_path, original_array, enable_subprocess=True
+            )
+        except Exception:
+            return original_array

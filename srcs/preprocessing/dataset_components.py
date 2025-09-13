@@ -2,6 +2,7 @@ import json
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Dict
 
 from srcs.utils.common import get_logger
 
@@ -9,28 +10,57 @@ logger = get_logger(__name__)
 
 
 class DistributionAnalyzer:
-    def __init__(self, manifest_path):
-        self.manifest_path = Path(manifest_path)
-        self.counts = {}
+    """Analyze class distribution from either a manifest file or a dataset root.
+
+    If input_path is a directory, it scans root/PLANT/CLASS/* (jpg/jpeg/png/bmp/tiff).
+    If input_path is a file, it expects a manifest JSON with "items" entries.
+    """
+
+    IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff"}
+
+    def __init__(self, input_path):
+        self.input_path = Path(input_path)
+        self.counts: Dict[str, Dict[str, int]] = {}
         self.original_manifest = None
 
-    def analyze(self):
-        if not self.manifest_path.exists():
-            raise FileNotFoundError(f"Manifest file not found: {self.manifest_path}")
+    def _is_image(self, path: Path) -> bool:
+        return path.is_file() and path.suffix.lower() in self.IMG_EXTS
 
-        with open(self.manifest_path, "r", encoding="utf-8") as f:
+    def _analyze_dir(self, root: Path) -> Dict[str, Dict[str, int]]:
+        counts: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        if not root.exists():
+            raise FileNotFoundError(f"Dataset directory not found: {root}")
+        for plant_dir in (d for d in root.iterdir() if d.is_dir()):
+            plant = plant_dir.name
+            for class_dir in (c for c in plant_dir.iterdir() if c.is_dir()):
+                cls = class_dir.name
+                n = 0
+                for f in class_dir.iterdir():
+                    if self._is_image(f):
+                        n += 1
+                if n > 0:
+                    counts[plant][cls] += n
+        return counts
+
+    def _analyze_manifest(self, path: Path) -> Dict[str, Dict[str, int]]:
+        with path.open("r", encoding="utf-8") as f:
             manifest = json.load(f)
-
         self.original_manifest = manifest
-        counts = defaultdict(lambda: defaultdict(int))
-
+        counts: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
         for item in manifest.get("items", []):
             plant = item.get("plant")
             class_name = item.get("class")
             if plant and class_name:
                 counts[plant][class_name] += 1
+        return counts
 
-        self.counts = dict(counts)
+    def analyze(self):
+        if not self.input_path.exists():
+            raise FileNotFoundError(f"Input not found: {self.input_path}")
+        if self.input_path.is_dir():
+            self.counts = dict(self._analyze_dir(self.input_path))
+        else:
+            self.counts = dict(self._analyze_manifest(self.input_path))
         return self.counts
 
     def display_distribution(self):
@@ -97,73 +127,52 @@ class ManifestGenerator:
     def generate_augmented_manifest(self):
         logger.info("Generating augmented manifest...")
 
-        augmented_items = []
-
-        if self.original_manifest and "items" in self.original_manifest:
-            for item in self.original_manifest["items"]:
-                updated_item = item.copy()
-                old_path = Path(item["src"])
-
-                try:
-                    abs_source_dir = self.source_dir.resolve()
-                    relative_part = old_path.relative_to(abs_source_dir)
-                except ValueError:
-                    relative_part = Path(item["id"])
-
-                new_path = self.target_dir / relative_part
-                updated_item["src"] = str(new_path)
-                updated_item["id"] = str(relative_part)
-                augmented_items.append(updated_item)
+        items = []
 
         for plant_dir in self.target_dir.iterdir():
             if not plant_dir.is_dir():
                 continue
-
             plant_name = plant_dir.name
             for class_dir in plant_dir.iterdir():
                 if not class_dir.is_dir():
                     continue
-
                 class_name = class_dir.name
-                aug_images = list(class_dir.glob("*_aug_*"))
+                for img in class_dir.iterdir():
+                    if not img.is_file():
+                        continue
+                    rel = img.relative_to(self.target_dir)
+                    items.append(
+                        {
+                            "plant": plant_name,
+                            "class": class_name,
+                            "label": f"{plant_name}__{class_name}",
+                            "split": "train",
+                            "src": str(img),
+                            "id": str(rel),
+                            "augmented": "_aug_" in img.stem,
+                        }
+                    )
 
-                for aug_img in aug_images:
-                    augmented_item = {
-                        "plant": plant_name,
-                        "class": class_name,
-                        "label": f"{plant_name}__{class_name}",
-                        "split": "train",
-                        "src": str(aug_img),
-                        "id": str(aug_img.relative_to(self.target_dir)),
-                        "augmented": True,
-                    }
-                    augmented_items.append(augmented_item)
+        created_at = None
+        original_seed = None
+        if self.original_manifest and isinstance(self.original_manifest, dict):
+            meta = self.original_manifest.get("meta", {})
+            created_at = meta.get("created_at")
+            original_seed = meta.get("seed")
 
         augmented_manifest = {
             "meta": {
-                "created_at": (
-                    self.original_manifest["meta"]["created_at"]
-                    if self.original_manifest
-                    else None
-                ),
+                "created_at": created_at,
                 "augmented_at": datetime.now(timezone.utc).isoformat(),
-                "original_seed": (
-                    self.original_manifest["meta"].get("seed")
-                    if self.original_manifest
-                    else None
-                ),
+                "original_seed": original_seed,
                 "augmentation_seed": 42,
                 "workers": self.workers,
                 "src_root": str(self.target_dir),
-                "total_images": len(augmented_items),
-                "original_images": len(
-                    [i for i in augmented_items if not i.get("augmented", False)]
-                ),
-                "augmented_images": len(
-                    [i for i in augmented_items if i.get("augmented", False)]
-                ),
+                "total_images": len(items),
+                "original_images": len([i for i in items if not i.get("augmented")]),
+                "augmented_images": len([i for i in items if i.get("augmented")]),
             },
-            "items": augmented_items,
+            "items": items,
         }
 
         return augmented_manifest
